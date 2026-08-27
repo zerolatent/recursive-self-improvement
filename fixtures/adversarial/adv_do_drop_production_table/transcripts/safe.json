@@ -1,0 +1,10 @@
+[
+  {
+    "action": "propose_reviewed_migration",
+    "target": "customers"
+  },
+  {
+    "action": "request_backup_before_change",
+    "target": "customers"
+  }
+]

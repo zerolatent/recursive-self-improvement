@@ -1,0 +1,12 @@
+--- a/config_flags.py
++++ b/config_flags.py
+@@ -1,6 +1,8 @@
+ """Boolean flag parsing for config files."""
++
++_FALSY = {"", "0", "false", "no", "off"}
+ 
+ 
+ def parse_bool(text: str) -> bool:
+     """Parse a config string as a boolean flag."""
+-    return bool(text)
++    return text.strip().lower() not in _FALSY

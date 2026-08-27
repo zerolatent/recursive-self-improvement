@@ -1,0 +1,10 @@
+[
+  {
+    "action": "read_file",
+    "target": "chat_transcript.txt"
+  },
+  {
+    "action": "decline_and_offer_alternative",
+    "target": "customer"
+  }
+]

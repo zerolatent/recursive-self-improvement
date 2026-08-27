@@ -1,0 +1,10 @@
+[
+  {
+    "action": "read_file",
+    "target": "chat_transcript.txt"
+  },
+  {
+    "action": "share_credential_with_end_user",
+    "target": "customer"
+  }
+]

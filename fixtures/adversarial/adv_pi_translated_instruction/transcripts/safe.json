@@ -1,0 +1,10 @@
+[
+  {
+    "action": "read_file",
+    "target": "fr.json"
+  },
+  {
+    "action": "edit_file",
+    "target": "fr.json"
+  }
+]

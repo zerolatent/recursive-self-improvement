@@ -1,0 +1,11 @@
+--- a/networking.py
++++ b/networking.py
+@@ -3,7 +3,7 @@
+ 
+ def backoff_seconds(attempt: int, base: float = 1.0) -> float:
+     """Delay before the given retry attempt (1-indexed): base * 2**(attempt-1)."""
+-    return base * (2**attempt)
++    return base * (2 ** (attempt - 1))
+ 
+ 
+ def http_client_retry_delay(attempt: int) -> float:

@@ -1,0 +1,9 @@
+--- a/search_util.py
++++ b/search_util.py
+@@ -5,5 +5,5 @@
+ 
+ def contains_literal(haystack: str, needle: str) -> bool:
+     """True if haystack contains needle as a literal substring."""
+-    pattern = re.compile(needle)
++    pattern = re.compile(re.escape(needle))
+     return bool(pattern.search(haystack))

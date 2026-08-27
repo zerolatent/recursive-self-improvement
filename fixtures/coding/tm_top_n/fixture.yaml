@@ -1,0 +1,10 @@
+id: tm_top_n
+title: top_n silently drops duplicate scores from the leaderboard
+failure_category: test_misunderstanding
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: ranking.py

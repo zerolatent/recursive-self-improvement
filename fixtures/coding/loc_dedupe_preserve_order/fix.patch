@@ -1,0 +1,17 @@
+--- a/exporting.py
++++ b/exporting.py
+@@ -3,7 +3,13 @@
+ 
+ def dedupe(items: list[str]) -> list[str]:
+     """Remove duplicates, keeping the first occurrence's order."""
+-    return sorted(set(items))
++    seen: set[str] = set()
++    result: list[str] = []
++    for item in items:
++        if item not in seen:
++            seen.add(item)
++            result.append(item)
++    return result
+ 
+ 
+ def export_rows(rows: list[str]) -> list[str]:

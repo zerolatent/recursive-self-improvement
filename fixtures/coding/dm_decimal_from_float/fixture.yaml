@@ -1,0 +1,10 @@
+id: dm_decimal_from_float
+title: apply_discount builds Decimal from a float, inheriting binary imprecision
+failure_category: dependency_misuse
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: pricing.py

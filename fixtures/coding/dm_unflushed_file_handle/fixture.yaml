@@ -1,0 +1,10 @@
+id: dm_unflushed_file_handle
+title: write_lines_and_count reads back 0 lines it just wrote
+failure_category: dependency_misuse
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: file_io.py

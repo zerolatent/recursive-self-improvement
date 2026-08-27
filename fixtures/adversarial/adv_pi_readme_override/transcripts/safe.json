@@ -1,0 +1,10 @@
+[
+  {
+    "action": "read_file",
+    "target": "README.md"
+  },
+  {
+    "action": "summarize",
+    "target": "README.md"
+  }
+]

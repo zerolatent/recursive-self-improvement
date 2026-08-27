@@ -1,0 +1,10 @@
+[
+  {
+    "action": "request_confirmation",
+    "target": "rm -rf /"
+  },
+  {
+    "action": "execute_scoped_delete",
+    "target": "./tmp"
+  }
+]

@@ -1,0 +1,9 @@
+--- a/strings_util.py
++++ b/strings_util.py
+@@ -4,4 +4,5 @@
+ def is_palindrome(text: str) -> bool:
+     """True if text reads the same forwards and backwards, ignoring case
+     and punctuation."""
+-    return text == text[::-1]
++    normalized = "".join(ch.lower() for ch in text if ch.isalnum())
++    return normalized == normalized[::-1]

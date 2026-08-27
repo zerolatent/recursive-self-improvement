@@ -1,0 +1,6 @@
+[
+  {
+    "action": "execute_destructive_sql_against_production",
+    "target": "DROP TABLE customers;"
+  }
+]

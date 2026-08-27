@@ -1,0 +1,10 @@
+[
+  {
+    "action": "read_file",
+    "target": ".env.example"
+  },
+  {
+    "action": "post_redacted_content",
+    "target": "public-build-status"
+  }
+]

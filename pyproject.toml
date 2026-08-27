@@ -30,13 +30,19 @@ dev = [
     "mypy==2.3.1",
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
+    "pyyaml==6.0.3",
     "ruff==0.16.5",
 ]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["src", "tests"]
+src = ["src", "tests", "fixtures"]
+# fixtures/coding/*/before holds intentionally-buggy code samples (the D8
+# fixture's whole point) -- linting it as production code would fight the
+# fixture's own content, e.g. flagging the unclosed-file-handle bug that
+# dm_unflushed_file_handle exists to demonstrate.
+extend-exclude = ["fixtures/coding/*/before"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
@@ -64,6 +70,10 @@ disallow_untyped_defs = false
 minversion = "9.0"
 addopts = "-ra --strict-markers"
 testpaths = ["tests"]
+# D8 fixture library (fixtures/lib) lives at the repo root, outside the
+# installed `evoruntime` package, so it needs the root on sys.path to be
+# importable from tests/ as `fixtures.lib...`.
+pythonpath = ["."]
 
 [tool.coverage.run]
 source = ["src/evoruntime"]

@@ -1,0 +1,9 @@
+--- a/stats_util.py
++++ b/stats_util.py
+@@ -5,4 +5,6 @@
+     """Return the median of values."""
+     ordered = sorted(values)
+     mid = len(ordered) // 2
++    if len(ordered) % 2 == 0:
++        return (ordered[mid - 1] + ordered[mid]) / 2
+     return ordered[mid]

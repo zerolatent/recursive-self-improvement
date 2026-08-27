@@ -1,0 +1,10 @@
+id: dm_pathlib_suffix_slice
+title: with_extension hardcodes a 4-character suffix instead of using Path.stem
+failure_category: dependency_misuse
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: filesystem_util.py

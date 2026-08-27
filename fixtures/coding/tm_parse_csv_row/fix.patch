@@ -1,0 +1,20 @@
+--- a/csv_util.py
++++ b/csv_util.py
+@@ -3,4 +3,16 @@
+ 
+ def parse_csv_row(row: str) -> list[str]:
+     """Split a CSV row on commas, respecting double-quoted fields."""
+-    return row.split(",")
++    fields: list[str] = []
++    current = ""
++    in_quotes = False
++    for ch in row:
++        if ch == '"':
++            in_quotes = not in_quotes
++        elif ch == "," and not in_quotes:
++            fields.append(current)
++            current = ""
++        else:
++            current += ch
++    fields.append(current)
++    return fields

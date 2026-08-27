@@ -1,0 +1,8 @@
+--- a/serialization.py
++++ b/serialization.py
+@@ -5,4 +5,4 @@
+ 
+ def to_json(payload: dict) -> str:
+     """Serialize a response payload, including Decimal fields, to JSON."""
+-    return json.dumps(payload)
++    return json.dumps(payload, default=str)

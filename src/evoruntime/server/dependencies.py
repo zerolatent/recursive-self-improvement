@@ -20,9 +20,10 @@ from typing import Annotated
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session, sessionmaker
 
-from evoruntime.core.identity import Principal, Role
+from evoruntime.core.principal import Principal
 from evoruntime.datasets.service import DatasetService, HoldoutService
 from evoruntime.db.base import build_engine, build_session_factory
+from evoruntime.security.identities import WorkloadIdentity, WorkloadRole
 
 IDENTITY_HEADER = "x-evoruntime-identity"
 ROLE_HEADER = "x-evoruntime-role"
@@ -35,14 +36,22 @@ def get_session_factory() -> sessionmaker[Session]:
     return build_session_factory(build_engine())
 
 
-def get_dataset_service() -> DatasetService:
-    """Return the partition service bound to the process session factory."""
-    return DatasetService(get_session_factory())
+SessionFactoryDep = Annotated["sessionmaker[Session]", Depends(get_session_factory)]
 
 
-def get_holdout_service() -> HoldoutService:
-    """Return the holdout service bound to the process session factory."""
-    return HoldoutService(get_session_factory())
+def get_dataset_service(session_factory: SessionFactoryDep) -> DatasetService:
+    """Return the partition service bound to the injected session factory."""
+    return DatasetService(session_factory)
+
+
+def get_holdout_service(session_factory: SessionFactoryDep) -> HoldoutService:
+    """Return the holdout service bound to the injected session factory.
+
+    The session factory arrives via `Depends` rather than a direct call so
+    a test can point the whole API at a throwaway database with one
+    dependency override — and so the wiring stays visible in one place.
+    """
+    return HoldoutService(session_factory)
 
 
 def get_principal(
@@ -61,14 +70,13 @@ def get_principal(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="missing workload identity headers"
         )
     try:
-        role = Role(x_evoruntime_role)
+        role = WorkloadRole(x_evoruntime_role)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="unknown workload role"
         ) from None
-    return Principal(
-        identity_id=x_evoruntime_identity, role=role, tenant_id=x_evoruntime_tenant
-    )
+    identity = WorkloadIdentity(role=role, subject=x_evoruntime_identity)
+    return Principal(identity=identity, tenant_id=x_evoruntime_tenant)
 
 
 PrincipalDep = Annotated[Principal, Depends(get_principal)]

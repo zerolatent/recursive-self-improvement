@@ -34,11 +34,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from evoruntime.core.identity import Role, StorageIdentity
 from evoruntime.core.ids import new_id
 from evoruntime.datasets.errors import DenialReason
-from evoruntime.datasets.partitions import PartitionKind
+from evoruntime.datasets.partitions import PartitionKind, StorageIdentity
 from evoruntime.db.base import Base
+from evoruntime.security.identities import WorkloadRole
 
 ALPHA_PRECISION = Numeric(12, 6)
 """Alpha budgets are exact decimals — float drift must never grant a free query."""
@@ -156,7 +156,9 @@ class HoldoutHandle(Base):
 
     __table_args__ = (
         CheckConstraint("alpha_spent <= alpha_budget_total", name="ck_handle_alpha_within_budget"),
-        CheckConstraint("alpha_budget_total >= 0 AND alpha_per_query > 0", name="ck_handle_alpha_positive"),
+        CheckConstraint(
+            "alpha_budget_total >= 0 AND alpha_per_query > 0", name="ck_handle_alpha_positive"
+        ),
         Index("ix_handle_partition", "partition_id"),
     )
 
@@ -183,7 +185,9 @@ class HoldoutQueryLedgerEntry(Base):
     partition_id: Mapped[str] = mapped_column(String(64), nullable=False)
 
     caller_identity: Mapped[str] = mapped_column(String(128), nullable=False)
-    caller_role: Mapped[Role] = mapped_column(_string_enum(Role, "caller_role"), nullable=False)
+    caller_role: Mapped[WorkloadRole] = mapped_column(
+        _string_enum(WorkloadRole, "caller_role"), nullable=False
+    )
     purpose: Mapped[str] = mapped_column(String(512), nullable=False)
 
     outcome: Mapped[LedgerOutcome] = mapped_column(

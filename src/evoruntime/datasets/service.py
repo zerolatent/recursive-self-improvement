@@ -28,8 +28,8 @@ from typing import Any, NoReturn
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from evoruntime.core.identity import Principal
 from evoruntime.core.ids import new_id
+from evoruntime.core.principal import Principal
 from evoruntime.datasets.errors import (
     DatasetError,
     DenialReason,
@@ -59,8 +59,26 @@ from evoruntime.datasets.schemas import (
     PartitionSummary,
 )
 from evoruntime.db.base import session_scope
+from evoruntime.security.policy import PermissionDeniedError, require_holdout_access
 
 audit_log = logging.getLogger("evoruntime.audit")
+
+
+def _has_holdout_access(principal: Principal) -> bool:
+    """Ask D7's policy whether this caller sits inside the evaluation plane.
+
+    Phrased as a question rather than a re-implemented role comparison:
+    `evoruntime.security.policy` is the single place that decides who may
+    reach holdout content, and this module needs the answer as a value so
+    it can ledger the denial instead of letting the exception escape
+    unrecorded.
+    """
+    try:
+        require_holdout_access(principal.identity)
+    except PermissionDeniedError:
+        return False
+    return True
+
 
 TOKEN_BYTES = 32
 """256 bits of entropy — handles must be unguessable, not merely unique."""
@@ -199,7 +217,7 @@ class DatasetService:
         would defeat the boundary before any request is served.
         """
         storage_identity = required_storage_identity(kind)
-        if is_sealed(kind) and not principal.is_evaluation_plane:
+        if is_sealed(kind) and not _has_holdout_access(principal):
             raise HoldoutAccessDeniedError(DenialReason.ROLE_NOT_EVALUATOR, principal.identity_id)
 
         with session_scope(self._session_factory) as session:
@@ -218,9 +236,9 @@ class DatasetService:
             )
             session.add(partition)
             session.flush()
-            return build_partition_summary(
-                partition, disclose_locator=not is_sealed(kind) or principal.is_evaluation_plane
-            )
+            # Sealed locators are withheld even from the creator who just
+            # supplied one: one rule, no exceptions, nothing to audit twice.
+            return build_partition_summary(partition, disclose_locator=not is_sealed(kind))
 
     def list_partitions(
         self, principal: Principal, *, dataset_id: str | None = None
@@ -285,7 +303,7 @@ class HoldoutService:
         contamination_audit: dict[str, Any] | None = None,
     ) -> IssuedHoldoutHandle:
         """Mint a handle for a sealed partition. Evaluation plane only."""
-        if not principal.is_evaluation_plane:
+        if not _has_holdout_access(principal):
             self._log_denial(principal, DenialReason.ROLE_NOT_EVALUATOR, handle_id=None)
             raise HoldoutAccessDeniedError(DenialReason.ROLE_NOT_EVALUATOR, principal.identity_id)
 
@@ -529,25 +547,22 @@ class HoldoutService:
         raise HoldoutAccessDeniedError(denial, principal.identity_id)
 
     @staticmethod
-    def _mutation_denial_reason(
-        principal: Principal, handle: HoldoutHandle
-    ) -> DenialReason | None:
+    def _mutation_denial_reason(principal: Principal, handle: HoldoutHandle) -> DenialReason | None:
         """Authorize a handle *lifecycle* change (rotate, revoke).
 
         Unlike resolution, expiry and exhausted budget are not blockers:
         rotating an expired handle is exactly how an operator recovers it.
         """
-        if not principal.is_evaluation_plane:
+        if not _has_holdout_access(principal):
             return DenialReason.ROLE_NOT_EVALUATOR
         if handle.tenant_id != principal.tenant_id:
             return DenialReason.TENANT_MISMATCH
         return None
 
-
     @staticmethod
     def _denial_reason(principal: Principal, handle: HoldoutHandle) -> DenialReason | None:
         """Return why this principal may not resolve this handle, or None to allow."""
-        if not principal.is_evaluation_plane:
+        if not _has_holdout_access(principal):
             return DenialReason.ROLE_NOT_EVALUATOR
         if handle.tenant_id != principal.tenant_id:
             return DenialReason.TENANT_MISMATCH

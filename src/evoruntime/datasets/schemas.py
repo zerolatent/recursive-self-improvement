@@ -16,11 +16,11 @@ from typing import Any
 
 from pydantic import Field
 
-from evoruntime.core.identity import Role, StorageIdentity
 from evoruntime.core.schemas import EvoRuntimeBaseModel
 from evoruntime.datasets.errors import DenialReason
 from evoruntime.datasets.models import LedgerOutcome
-from evoruntime.datasets.partitions import PartitionKind
+from evoruntime.datasets.partitions import PartitionKind, StorageIdentity
+from evoruntime.security.identities import WorkloadRole
 
 
 class PartitionSummary(EvoRuntimeBaseModel):
@@ -113,7 +113,7 @@ class LedgerEntryRecord(EvoRuntimeBaseModel):
     partition_id: str
     tenant_id: str
     caller_identity: str
-    caller_role: Role
+    caller_role: WorkloadRole
     purpose: str
     outcome: LedgerOutcome
     denial_reason: DenialReason | None

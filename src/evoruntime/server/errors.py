@@ -41,9 +41,7 @@ async def handle_access_denied(_: Request, exc: Exception) -> JSONResponse:
 
 async def handle_bad_partition(_: Request, exc: Exception) -> JSONResponse:
     """Render an invalid partition operation as 400."""
-    return JSONResponse(
-        status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)}
-    )
+    return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
 
 
 def install_error_handlers(app: FastAPI) -> None:

@@ -10,10 +10,20 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from evoruntime.core.identity import StorageIdentity
-
 HOLDOUT_HANDLE_SCHEME = "holdout"
 """URI scheme for the opaque handle the API hands out in place of content."""
+
+
+class StorageIdentity(StrEnum):
+    """Storage identities that own dataset content at rest.
+
+    Holdout content is stored exclusively under the evaluation plane's
+    storage identity, so no other plane's credentials reach that bucket
+    even if an application-layer check is one day wrong.
+    """
+
+    EVALUATION_PLANE = "evaluation-plane"
+    RUNTIME_PLANE = "runtime-plane"
 
 
 class PartitionKind(StrEnum):
@@ -39,7 +49,17 @@ class PartitionKind(StrEnum):
 
 
 SEALED_PARTITION_KINDS: frozenset[PartitionKind] = frozenset({PartitionKind.HOLDOUT})
-"""Partition kinds whose content is reachable only through a sealed handle."""
+"""Partition kinds whose content is reachable only through a sealed handle.
+
+Holdout only, deliberately — and the exclusion worth explaining is
+`ADVERSARIAL`. Attack fixtures carry a real contamination risk (a
+candidate that can read the injection corpus can hard-code defenses
+against it), but sealing them would make every adversarial run spend
+statistical alpha it has no claim on, and D8's fixtures must be
+executable by candidate runs by design. The spec's D5 row scopes sealing
+to holdout content; adversarial contamination control is a Phase 1
+concern and belongs with the optimizer plugins that create the exposure.
+"""
 
 
 def is_sealed(kind: PartitionKind) -> bool:

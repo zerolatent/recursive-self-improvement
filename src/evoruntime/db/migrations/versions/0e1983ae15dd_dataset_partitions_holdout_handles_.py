@@ -37,7 +37,7 @@ FOR EACH STATEMENT EXECUTE FUNCTION evoruntime_reject_ledger_mutation();
 
 # revision identifiers, used by Alembic.
 revision: str = "0e1983ae15dd"
-down_revision: str | Sequence[str] | None = "a2f61fcdb399"
+down_revision: str | Sequence[str] | None = "8eb27341f4e1"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

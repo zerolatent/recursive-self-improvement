@@ -1,7 +1,7 @@
 """events table
 
 Revision ID: 314039145b57
-Revises: a2f61fcdb399
+Revises: 0e1983ae15dd
 Create Date: 2026-08-27 20:32:21.892264
 
 """
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "314039145b57"
-down_revision: str | Sequence[str] | None = "a2f61fcdb399"
+down_revision: str | Sequence[str] | None = "0e1983ae15dd"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

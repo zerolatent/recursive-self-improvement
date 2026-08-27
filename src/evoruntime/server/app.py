@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from evoruntime import __version__
+from evoruntime.server import ingest
 from evoruntime.server.errors import install_error_handlers
 from evoruntime.server.routers import datasets
 from evoruntime.server.settings import get_settings
@@ -15,7 +16,10 @@ def create_app() -> FastAPI:
 
     A factory (rather than a module-level singleton) keeps the app
     constructible with fresh settings per-call, which matters for testing
-    and for future multi-worker startup hooks.
+    and for future multi-worker startup hooks. Routers get their database
+    access via `Depends(get_session_factory)` (see `server.dependencies`),
+    so a test overrides `app.dependency_overrides[get_session_factory]`
+    rather than needing a constructor parameter here.
     """
     settings = get_settings()
     app = FastAPI(title=settings.service_name, version=__version__)
@@ -33,6 +37,7 @@ def create_app() -> FastAPI:
 
     install_error_handlers(app)
     app.include_router(datasets.router)
+    app.include_router(ingest.router)
     return app
 
 

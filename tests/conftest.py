@@ -16,7 +16,9 @@ tests a table-less schema depending on collection order.
 Isolation differs per domain by necessity: lineage tests truncate their
 tables, while dataset tests cannot (ledger rows are undeletable by
 design, which is the point) and instead scope every test to a fresh
-`tenant_id` and assert only on their own rows.
+`tenant_id` and assert only on their own rows. Trace-ingest tests (D2)
+follow the same pattern: each test picks its own tenant_id and asserts
+only on rows it wrote.
 """
 
 from __future__ import annotations
@@ -123,7 +125,8 @@ def _payload_master_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None
 
 @pytest.fixture
 def session_factory(database_url: str) -> Iterator[sessionmaker[Session]]:
-    """Session factory for dataset tests, against a database migrated to head.
+    """Session factory for dataset and trace-ingest tests, against a database
+    migrated to head.
 
     Function-scoped for the same reason `db_session` is: a session-scoped
     factory would survive `test_migrations.py`'s downgrade-to-base and hand

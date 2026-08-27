@@ -3,6 +3,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+import evoruntime.db.models  # noqa: F401  # registers ORM models on Base.metadata
 from evoruntime.db.base import Base
 from evoruntime.db.settings import get_database_settings
 

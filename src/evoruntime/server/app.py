@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from evoruntime import __version__
+from evoruntime.server.errors import install_error_handlers
+from evoruntime.server.routers import datasets
 from evoruntime.server.settings import get_settings
 
 
@@ -29,6 +31,8 @@ def create_app() -> FastAPI:
         """
         return {"status": "ok"}
 
+    install_error_handlers(app)
+    app.include_router(datasets.router)
     return app
 
 

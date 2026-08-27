@@ -2,11 +2,17 @@
 
 Every event built here is independently valid against `EventEnvelope`; only
 `event_id`/`trace_id`/`task_id`/`occurred_at` vary per index so a whole
-fixture set is unique and ordered.
+fixture set is unique and ordered. `event_id` also folds in `tenant_id`
+(sanitized to satisfy its `evt_[A-Za-z0-9]+` pattern) because, unlike
+`trace_id`/`task_id`, it carries a *global* uniqueness constraint — tests
+share one long-lived database with no row cleanup between them, so an
+index-only id (e.g. `evt_000000000000`) collides across every test/tenant
+that happens to start from the same index.
 """
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -14,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from evoruntime.core.events import parse_wire_envelope
 from evoruntime.core.hashchain import GENESIS_HASH, compute_event_hash
-from evoruntime.db.models import Event
+from evoruntime.db.models.events import Event
 
 BASE_TIME = datetime(2026, 8, 27, 12, 0, 0, tzinfo=UTC)
 
@@ -36,8 +42,9 @@ def make_raw_event(
     they're actually exercising.
     """
     digest = f"sha256:{index:064x}"
+    tenant_suffix = re.sub(r"[^A-Za-z0-9]", "", tenant_id)
     return {
-        "event_id": f"evt_{index:012d}",
+        "event_id": f"evt_{tenant_suffix}{index:012d}",
         "occurred_at": (BASE_TIME + timedelta(seconds=index)).isoformat(),
         "tenant_id": tenant_id,
         "agent_id": agent_id,

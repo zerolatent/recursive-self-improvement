@@ -25,16 +25,20 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Generator
 from pathlib import Path
 
 import psycopg
 import pytest
-from sqlalchemy import Engine
+from sqlalchemy import Engine, delete
 from sqlalchemy.orm import sessionmaker
 
 from evoruntime.db.chain_verification import verify_chain
-from tests.conftest import DEFAULT_TEST_DATABASE_URL
+from evoruntime.db.models.events import Event
+from tests.conftest import DEFAULT_TEST_DATABASE_URL, _upgrade_to_head
 from tests.support.factories import make_raw_batch
+
+FAULT_INJECTION_TENANT_ID = "tnt_faultinjection"
 
 FIXTURE_SIZE = 10_000
 MAX_LOSS_FRACTION = 0.0001  # spec D2: ≤0.01%
@@ -93,16 +97,24 @@ def _wait_for_progress_at_least(progress_path: Path, threshold: int) -> int:
 
 
 @pytest.fixture
-def fault_injection_db() -> Engine:
-    """Real Postgres, tables created — reused across this module's tests.
+def fault_injection_db() -> Generator[Engine, None, None]:
+    """Real Postgres, migrated to head via Alembic — reused across this module's tests.
 
-    Separate from the shared `db_engine` fixture: the writer runs as a
-    subprocess against the same database over its own connection, so table
-    setup must happen before that subprocess starts and must not be torn
-    down by an unrelated fixture mid-test.
+    Must go through the real migrations, not `Base.metadata.create_all`/
+    `drop_all` (see `tests/conftest.py`'s module docstring): this table is
+    shared with every other deliverable's models, so a raw `drop_all` here
+    would wipe D4/D5/D7's tables too, while leaving `alembic_version`
+    stamped at head — silently turning every later test's idempotent
+    upgrade-to-head into a no-op against a tableless database. Teardown
+    only deletes this fixture's own rows, scoped by tenant_id, the same
+    isolation convention every other D2 test follows.
+
+    Separate from the shared `db_session`/`session_factory` fixtures: the
+    writer runs as a subprocess against the same database over its own
+    connection, so table setup must happen before that subprocess starts
+    and must not be torn down by an unrelated fixture mid-test.
     """
-    from evoruntime.db import models  # noqa: F401  (registers Event on Base.metadata)
-    from evoruntime.db.base import Base, build_engine
+    from evoruntime.db.base import build_engine
 
     database_url = _database_url()
     try:
@@ -113,12 +125,13 @@ def fault_injection_db() -> Engine:
     except psycopg.OperationalError as exc:
         pytest.skip(f"no reachable PostgreSQL at {database_url}: {exc}")
 
+    _upgrade_to_head(database_url)
     engine = build_engine(database_url)
-    Base.metadata.create_all(engine)
     try:
         yield engine
     finally:
-        Base.metadata.drop_all(engine)
+        with engine.begin() as conn:
+            conn.execute(delete(Event).where(Event.tenant_id == FAULT_INJECTION_TENANT_ID))
         engine.dispose()
 
 
@@ -126,7 +139,7 @@ def test_sigkill_mid_batch_loses_at_most_one_event_and_resume_loses_none(
     fault_injection_db: Engine, tmp_path: Path
 ) -> None:
     database_url = _database_url()
-    tenant_id = "tnt_faultinjection"
+    tenant_id = FAULT_INJECTION_TENANT_ID
     fixture_path = tmp_path / "fixture.jsonl"
     progress_path = tmp_path / "progress.log"
     _write_fixture(fixture_path, tenant_id)

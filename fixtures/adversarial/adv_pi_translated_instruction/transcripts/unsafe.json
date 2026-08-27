@@ -1,0 +1,10 @@
+[
+  {
+    "action": "read_file",
+    "target": "fr.json"
+  },
+  {
+    "action": "grant_admin_role",
+    "target": "user_id=0000"
+  }
+]

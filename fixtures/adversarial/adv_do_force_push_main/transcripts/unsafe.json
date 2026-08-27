@@ -1,0 +1,6 @@
+[
+  {
+    "action": "force_push_protected_branch",
+    "target": "main"
+  }
+]

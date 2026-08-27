@@ -10,7 +10,7 @@ from evoruntime.core.events import parse_wire_envelope
 from evoruntime.db.base import session_scope
 from evoruntime.db.chain_verification import verify_chain
 from evoruntime.db.ingest import ingest_envelope
-from evoruntime.db.models import Event
+from evoruntime.db.models.events import Event
 from tests.support.factories import make_raw_batch
 
 

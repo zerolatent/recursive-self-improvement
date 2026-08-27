@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from evoruntime.db.base import session_scope
 from evoruntime.db.chain_verification import verify_chain
-from evoruntime.db.models import Event
+from evoruntime.db.models.events import Event
 from tests.support.factories import insert_chain_fixture
 
 FIXTURE_SIZE = 10_000

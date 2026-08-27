@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from evoruntime.core.events import EventEnvelope
 from evoruntime.core.hashchain import GENESIS_HASH, compute_event_hash
-from evoruntime.db.models import Event
+from evoruntime.db.models.events import Event
 
 
 class DuplicateEventError(Exception):

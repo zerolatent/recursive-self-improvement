@@ -31,7 +31,9 @@ router = APIRouter(tags=["ingest"])
 
 
 @router.post("/v1/events:ingest", response_model=IngestBatchResponse)
-def ingest_batch(payload: IngestBatchRequest, session_factory: SessionFactoryDep) -> IngestBatchResponse:
+def ingest_batch(
+    payload: IngestBatchRequest, session_factory: SessionFactoryDep
+) -> IngestBatchResponse:
     """Validate and persist a batch of raw event payloads.
 
     Returns 200 with a per-item accept/reject breakdown rather than a single
@@ -77,7 +79,9 @@ def ingest_batch(payload: IngestBatchRequest, session_factory: SessionFactoryDep
 
 
 @router.get("/v1/tenants/{tenant_id}/chain/verify", response_model=ChainVerificationResponse)
-def verify_tenant_chain(tenant_id: str, session_factory: SessionFactoryDep) -> ChainVerificationResponse:
+def verify_tenant_chain(
+    tenant_id: str, session_factory: SessionFactoryDep
+) -> ChainVerificationResponse:
     """Walk one tenant's hash chain end to end and report any violation."""
     with session_scope(session_factory) as session:
         result = verify_chain(session, tenant_id)

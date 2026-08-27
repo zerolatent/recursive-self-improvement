@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM models for the `events` table (deliverable D2).
+"""SQLAlchemy ORM model for the `events` table (deliverable D2).
 
 One row per ingested trace event: the envelope's fields, flattened where
 useful for querying (tenant/agent/release/trace/task ids, type) and kept as
@@ -6,8 +6,9 @@ JSON where the field is itself structured (`model`, `cost`,
 `artifact_digests`), plus the hash-chain columns (`prev_hash`/`event_hash`)
 and the per-tenant `chain_seq` that gives the chain a total order.
 
-Later deliverables (D4 lineage, D5 partitions) add sibling tables against
-the same `Base.metadata`; this module only owns `events`.
+Sibling deliverables register their own tables against the same
+`Base.metadata` from their own module (see `db/models/lineage.py` for D4,
+`evoruntime/datasets/models.py` for D5); this module only owns `events`.
 """
 
 from __future__ import annotations

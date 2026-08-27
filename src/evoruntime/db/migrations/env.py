@@ -12,9 +12,15 @@ from evoruntime.db.settings import get_database_settings
 config = context.config
 
 # Interpret the config file for Python logging.
-# This line sets up loggers basically.
+#
+# `disable_existing_loggers=False` is load-bearing rather than cosmetic:
+# the default (True) disables every logger already created in the process,
+# which includes `evoruntime.audit`. Any process that runs a migration
+# in-process — a startup hook, a management script, a test session — would
+# afterwards emit no holdout denial records at all, and the failure is
+# silent because logging never raises.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # alembic.ini deliberately leaves sqlalchemy.url unset. If the caller (a
 # script, a test, `-x` override) already set one on this Config object, it

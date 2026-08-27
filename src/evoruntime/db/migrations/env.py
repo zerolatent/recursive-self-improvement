@@ -25,8 +25,8 @@ config.set_main_option(
     config.get_main_option("sqlalchemy.url") or get_database_settings().database_url,
 )
 
-# Domain models register themselves on Base.metadata as they are added
-# (D2/D4/D5); autogenerate diffs against this single metadata object.
+# Domain models register themselves on Base.metadata via evoruntime.db.models,
+# imported above; autogenerate diffs against this single metadata object.
 target_metadata = Base.metadata
 
 

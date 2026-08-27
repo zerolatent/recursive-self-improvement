@@ -3,7 +3,10 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-import evoruntime.db.models  # noqa: F401  # registers ORM models on Base.metadata
+# Importing the models module (for its side effect of registering ORM classes
+# on Base.metadata) is required for autogenerate to see any table beyond the
+# empty baseline. Add new model modules here as they land.
+import evoruntime.db.models  # noqa: F401
 from evoruntime.db.base import Base
 from evoruntime.db.settings import get_database_settings
 

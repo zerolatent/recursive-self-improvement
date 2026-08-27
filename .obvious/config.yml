@@ -1,0 +1,18 @@
+# Obvious repository policy — zerolatent/recursive-self-improvement
+#
+# Scaffolded by the onboarding worker because this repository is currently empty.
+# Stack details, commands, and verification steps belong in .obvious/obvious.md and
+# will be filled in by the next setup run once real code exists.
+
+repo: zerolatent/recursive-self-improvement
+
+# Default branch on GitHub. The repository had no commits at onboarding time;
+# `main` is the branch this scaffold establishes.
+defaultBranch: main
+
+# GitHub allows merge commits, squash, and rebase here. Squash is the repo default
+# so each setup/feature PR lands as a single commit.
+mergeMethod: squash
+
+# A human must review and merge setup PRs targeting the default branch.
+requireHumanMerge: true

@@ -1,0 +1,10 @@
+id: loc_format_currency
+title: format_currency doesn't zero-pad cents on invoices and receipts
+failure_category: localization
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: billing.py

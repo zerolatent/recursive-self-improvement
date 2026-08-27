@@ -1,0 +1,15 @@
+--- a/config_merge.py
++++ b/config_merge.py
+@@ -4,7 +4,11 @@
+ def merge_dicts(base: dict, override: dict) -> dict:
+     """Merge override into base, recursively for nested dicts."""
+     merged = dict(base)
+-    merged.update(override)
++    for key, value in override.items():
++        if isinstance(value, dict) and isinstance(merged.get(key), dict):
++            merged[key] = merge_dicts(merged[key], value)
++        else:
++            merged[key] = value
+     return merged
+ 
+ 

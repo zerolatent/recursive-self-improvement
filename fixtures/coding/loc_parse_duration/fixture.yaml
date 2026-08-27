@@ -1,0 +1,10 @@
+id: loc_parse_duration
+title: parse_duration can't parse hours for the scheduler or billing
+failure_category: localization
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: scheduling.py

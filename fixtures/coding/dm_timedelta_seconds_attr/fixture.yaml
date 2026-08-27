@@ -1,0 +1,10 @@
+id: dm_timedelta_seconds_attr
+title: seconds_until uses timedelta.seconds instead of total_seconds()
+failure_category: dependency_misuse
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: timestamps.py

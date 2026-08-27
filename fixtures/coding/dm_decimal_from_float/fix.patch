@@ -1,0 +1,8 @@
+--- a/pricing.py
++++ b/pricing.py
+@@ -5,4 +5,4 @@
+ 
+ def apply_discount(price: float, discount_rate: float) -> Decimal:
+     """Apply a discount rate (e.g. 0.1 for 10%) to a price, exactly."""
+-    return Decimal(price) * (Decimal(1) - Decimal(discount_rate))
++    return Decimal(str(price)) * (Decimal(1) - Decimal(str(discount_rate)))

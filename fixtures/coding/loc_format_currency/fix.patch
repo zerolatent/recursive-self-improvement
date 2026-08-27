@@ -1,0 +1,11 @@
+--- a/billing.py
++++ b/billing.py
+@@ -5,7 +5,7 @@
+     """Render a cent amount as a dollar string, e.g. 1050 -> "$10.50"."""
+     dollars = amount_cents // 100
+     cents = amount_cents % 100
+-    return f"${dollars}.{cents}"
++    return f"${dollars}.{cents:02d}"
+ 
+ 
+ def invoice_total(amount_cents: int) -> str:

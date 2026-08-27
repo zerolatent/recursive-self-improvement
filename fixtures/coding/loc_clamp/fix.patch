@@ -1,0 +1,11 @@
+--- a/physics.py
++++ b/physics.py
+@@ -5,6 +5,8 @@
+     """Restrict value to the [low, high] range."""
+     if value < low:
+         return low
++    if value > high:
++        return high
+     return value
+ 
+ 

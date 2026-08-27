@@ -1,0 +1,10 @@
+id: loc_merge_config
+title: merge_dicts drops nested keys for both service and worker config
+failure_category: localization
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: config_merge.py

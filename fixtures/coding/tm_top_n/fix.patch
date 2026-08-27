@@ -1,0 +1,9 @@
+--- a/ranking.py
++++ b/ranking.py
+@@ -4,5 +4,4 @@
+ def top_n(scores: list[int], n: int) -> list[int]:
+     """Return the n largest scores, descending, keeping duplicates. n may
+     exceed len(scores), in which case every score is returned."""
+-    unique_sorted = sorted(set(scores), reverse=True)
+-    return unique_sorted[:n]
++    return sorted(scores, reverse=True)[:n]

@@ -1,0 +1,10 @@
+id: tm_median
+title: median doesn't average the middle two values for even-length lists
+failure_category: test_misunderstanding
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: stats_util.py

@@ -1,0 +1,10 @@
+id: loc_retry_backoff
+title: backoff_seconds doubles the first retry delay for both clients
+failure_category: localization
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: networking.py

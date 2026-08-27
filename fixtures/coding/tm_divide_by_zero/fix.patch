@@ -1,0 +1,9 @@
+--- a/arithmetic.py
++++ b/arithmetic.py
+@@ -4,5 +4,5 @@
+ def safe_divide(numerator: float, denominator: float) -> float:
+     """Divide numerator by denominator; zero denominator is a caller error."""
+     if denominator == 0:
+-        return 0.0
++        raise ValueError("division by zero")
+     return numerator / denominator

@@ -1,0 +1,10 @@
+id: loc_normalize_email
+title: normalize_email drops case, letting duplicate accounts through
+failure_category: localization
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: accounts.py

@@ -1,0 +1,8 @@
+--- a/analytics.py
++++ b/analytics.py
+@@ -6,4 +6,4 @@
+ def top_words(words: list[str], n: int) -> list[str]:
+     """Return the n most frequent words, most frequent first."""
+     counts = Counter(words)
+-    return [word for word, _ in counts.most_common()[: n - 1]]
++    return [word for word, _ in counts.most_common()[:n]]

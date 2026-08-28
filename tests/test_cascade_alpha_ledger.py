@@ -12,7 +12,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from evoruntime.core.principal import Principal
-from evoruntime.datasets.schemas import IssuedHoldoutHandle
+from evoruntime.datasets.schemas import IssuedHoldoutHandle, PartitionSummary
 from evoruntime.datasets.service import HoldoutService
 from evoruntime.eval.cascade import (
     CascadeStage,
@@ -99,17 +99,31 @@ class TestPerStageAlphaLedger:
         holdout_service: HoldoutService,
         evaluator: Principal,
         issued_handle: IssuedHoldoutHandle,
+        sealed_partition: PartitionSummary,
     ) -> None:
-        """A second cascade run appends its own rows — purposes repeat, rows don't."""
-        for stage in sorted(make_stages(), key=lambda s: s.stage):
-            resolve_stage(holdout_service, evaluator, issued_handle, stage)
+        """A rerun gets a fresh handle; each ledger shows one row per stage."""
         for stage in sorted(make_stages(), key=lambda s: s.stage):
             resolve_stage(holdout_service, evaluator, issued_handle, stage)
 
-        entries = holdout_service.read_ledger(evaluator, issued_handle.handle_uri)
-        assert len(entries) == 6
-        assert [entry.purpose for entry in entries] == [
+        rerun_handle = holdout_service.issue_handle(
+            evaluator,
+            partition_id=sealed_partition.id,
+            owner="eval-team",
+            alpha_budget_total=Decimal("0.04"),
+            alpha_per_query=Decimal("0.01"),
+            freshness_window_days=30,
+            rotation_plan="rotate-quarterly",
+            contamination_audit={"source": "github-issues-2026-q2", "contaminated": False},
+        )
+        for stage in sorted(make_stages(), key=lambda s: s.stage):
+            resolve_stage(holdout_service, evaluator, rerun_handle, stage)
+
+        expected = [
             "cascade.stage.0:lint",
             "cascade.stage.1:test-suite",
             "cascade.stage.2:full-holdout",
-        ] * 2
+        ]
+        first = holdout_service.read_ledger(evaluator, issued_handle.handle_uri)
+        second = holdout_service.read_ledger(evaluator, rerun_handle.handle_uri)
+        assert [e.purpose for e in first] == expected
+        assert [e.purpose for e in second] == expected

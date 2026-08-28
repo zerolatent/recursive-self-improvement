@@ -14,7 +14,13 @@ import base64
 import pytest
 
 from evoruntime.campaign.errors import MutationMaskViolationError
-from evoruntime.campaign.masks import MaskEnforcingAdapter, MutationMask, mask_violations
+from evoruntime.campaign.masks import (
+    MaskEnforcingAdapter,
+    MutationMask,
+    mask_violations,
+    masks_from_spec,
+    member_mask_violations,
+)
 from evoruntime.plugins.protocol import (
     CandidateBundle,
     CanonicalBytes,
@@ -143,3 +149,191 @@ class TestMaskFromSpec:
         mask = MutationMask.from_spec(make_spec().mutable_artifact)
         assert mask.artifact_type == "prompt_bundle"
         assert mask.allowed_paths == ("prompts/system.md",)
+
+
+# ---------------------------------------------------------------------------
+# Per-member masks (Phase 2, F4): one mask per member of the mutable set.
+# ---------------------------------------------------------------------------
+
+
+def make_member_mask(artifact_type: str, *paths: str) -> MutationMask:
+    return MutationMask(artifact_type=artifact_type, allowed_paths=tuple(paths))
+
+
+def typed_bundle(primary: str, *entries: tuple[str, str]) -> CandidateBundle:
+    """A multi-type bundle: each entry is (member_type, path) and declares
+    its own artifact_type — the bundle's primary type comes first."""
+    return CandidateBundle(
+        artifact_type=primary,
+        artifact_types=tuple(t for t, _ in entries),
+        files=tuple(
+            {"path": path, "data_b64": _b64("x"), "artifact_type": member_type}
+            for member_type, path in entries
+        ),
+    )
+
+
+def make_base() -> CanonicalBytes:
+    return CanonicalBytes(data_b64=_b64("base"), digest="sha256:" + "0" * 64)
+
+
+class TestPerMemberMasks:
+    def test_each_file_is_checked_against_its_own_member_mask(self) -> None:
+        masks = (
+            make_member_mask("prompt_bundle", "prompts/system.md"),
+            make_member_mask("workflow_graph", "workflows/main.yaml"),
+        )
+        clean = typed_bundle(
+            "prompt_bundle",
+            ("prompt_bundle", "prompts/system.md"),
+            ("workflow_graph", "workflows/main.yaml"),
+        )
+        assert member_mask_violations(masks, clean.files) == ()
+
+    def test_violation_names_the_member_whose_mask_escaped(self) -> None:
+        masks = (
+            make_member_mask("prompt_bundle", "prompts/system.md"),
+            make_member_mask("workflow_graph", "workflows/main.yaml"),
+        )
+        candidate = typed_bundle(
+            "prompt_bundle",
+            ("prompt_bundle", "prompts/system.md"),
+            ("workflow_graph", "workflows/other.yaml"),
+        )
+        violations = member_mask_violations(masks, candidate.files)
+        assert len(violations) == 1
+        assert "workflow_graph" in violations[0]
+        assert "workflows/other.yaml" in violations[0]
+
+    def test_multi_mask_validate_rejects_without_reaching_the_adapter(self) -> None:
+        spy = SpyAdapter()
+        wrapper = MaskEnforcingAdapter(
+            spy,
+            (
+                make_member_mask("prompt_bundle", "prompts/system.md"),
+                make_member_mask("workflow_graph", "workflows/main.yaml"),
+            ),
+        )
+        candidate = typed_bundle(
+            "prompt_bundle",
+            ("prompt_bundle", "prompts/system.md"),
+            ("workflow_graph", "skills/escape.md"),
+        )
+        report = wrapper.validate(candidate)
+        assert report.accepted is False
+        assert any("skills/escape.md" in v or "skills/escape" in v for v in report.violations)
+        assert spy.validate_calls == []  # the wrapped adapter was never reached
+
+    def test_multi_mask_validate_clean_candidate_reaches_the_adapter(self) -> None:
+        spy = SpyAdapter()
+        wrapper = MaskEnforcingAdapter(
+            spy,
+            (
+                make_member_mask("prompt_bundle", "prompts/system.md"),
+                make_member_mask("workflow_graph", "workflows/main.yaml"),
+            ),
+        )
+        report = wrapper.validate(
+            typed_bundle(
+                "prompt_bundle",
+                ("prompt_bundle", "prompts/system.md"),
+                ("workflow_graph", "workflows/main.yaml"),
+            )
+        )
+        assert report.accepted is True
+        assert len(spy.validate_calls) == 1
+
+    def test_render_with_multiple_masks_requires_the_member_type(self) -> None:
+        wrapper = MaskEnforcingAdapter(
+            SpyAdapter(),
+            (
+                make_member_mask("prompt_bundle", "prompts/system.md"),
+                make_member_mask("workflow_graph", "workflows/main.yaml"),
+            ),
+        )
+        with pytest.raises(MutationMaskViolationError, match="artifact_type"):
+            wrapper.render(make_base(), {"files": [{"path": "prompts/system.md"}]})
+
+    def test_render_of_an_undeclared_member_type_is_refused(self) -> None:
+        wrapper = MaskEnforcingAdapter(
+            SpyAdapter(),
+            (
+                make_member_mask("prompt_bundle", "prompts/system.md"),
+                make_member_mask("workflow_graph", "workflows/main.yaml"),
+            ),
+        )
+        with pytest.raises(MutationMaskViolationError, match="skill_package"):
+            wrapper.render(
+                make_base(),
+                {"files": [{"path": "prompts/system.md"}]},
+                artifact_type="skill_package",
+            )
+
+    def test_render_names_its_member_and_is_mask_checked(self) -> None:
+        spy = SpyAdapter()
+        wrapper = MaskEnforcingAdapter(
+            spy,
+            (
+                make_member_mask("prompt_bundle", "prompts/system.md"),
+                make_member_mask("workflow_graph", "workflows/main.yaml"),
+            ),
+        )
+        out = wrapper.render(
+            make_base(),
+            {"files": [{"path": "workflows/main.yaml"}]},
+            artifact_type="workflow_graph",
+        )
+        assert out == make_base()
+        assert len(spy.render_calls) == 1
+
+    def test_render_outside_the_named_members_mask_raises_before_execution(self) -> None:
+        spy = SpyAdapter()
+        wrapper = MaskEnforcingAdapter(
+            spy,
+            (
+                make_member_mask("prompt_bundle", "prompts/system.md"),
+                make_member_mask("workflow_graph", "workflows/main.yaml"),
+            ),
+        )
+        with pytest.raises(MutationMaskViolationError, match="workflows/other.yaml"):
+            wrapper.render(
+                make_base(),
+                {"files": [{"path": "workflows/other.yaml"}]},
+                artifact_type="workflow_graph",
+            )
+        assert spy.render_calls == []
+
+    def test_single_mask_wrapper_keeps_the_v1_shape(self) -> None:
+        """A one-member campaign behaves exactly like the pre-F4 wrapper."""
+        spy = SpyAdapter()
+        wrapper = MaskEnforcingAdapter(spy, make_mask())
+        assert wrapper.mask == make_mask()
+        assert wrapper.validate(bundle_with("prompts/system.md")).accepted is True
+        assert wrapper.render(make_base(), {"files": [{"path": "prompts/system.md"}]})
+
+    def test_masks_from_spec_builds_one_mask_per_member_in_order(self) -> None:
+        from evoruntime.campaign.spec import MutableArtifact, MutableArtifactSet
+
+        mutable = MutableArtifactSet(
+            artifacts=(
+                MutableArtifact(artifact_type="prompt_bundle", paths=("prompts/system.md",)),
+                MutableArtifact(artifact_type="workflow_graph", paths=("workflows/main.yaml",)),
+            )
+        )
+        masks = masks_from_spec(mutable)
+        assert [m.artifact_type for m in masks] == ["prompt_bundle", "workflow_graph"]
+        assert masks[0].allowed_paths == ("prompts/system.md",)
+        assert masks[1].allowed_paths == ("workflows/main.yaml",)
+
+    def test_file_without_a_type_under_multiple_masks_is_a_violation(self) -> None:
+        masks = (
+            make_member_mask("prompt_bundle", "prompts/system.md"),
+            make_member_mask("workflow_graph", "workflows/main.yaml"),
+        )
+        ambiguous = CandidateBundle(
+            artifact_type="prompt_bundle",
+            files=({"path": "prompts/system.md", "data_b64": _b64("x")},),
+        )
+        violations = member_mask_violations(masks, ambiguous.files)
+        assert len(violations) == 1
+        assert "artifact_type" in violations[0]

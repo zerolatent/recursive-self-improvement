@@ -185,3 +185,137 @@ class TestYamlAuthoring:
     def test_non_mapping_yaml_is_refused(self) -> None:
         with pytest.raises(InvalidCampaignSpecError, match="mapping"):
             CampaignSpec.from_yaml("- just\n- a\n- list\n")
+
+
+# ---------------------------------------------------------------------------
+# Spec v2: MutableArtifactSet validation, v1 migration window, pinning (F4)
+# ---------------------------------------------------------------------------
+
+
+class TestMutableArtifactSetV2:
+    def test_v2_spec_requires_a_non_empty_mutable_artifacts_list(self) -> None:
+        raw = make_spec_mapping()
+        raw["schema_version"] = 2
+        raw["mutable_artifacts"] = []
+        with pytest.raises(InvalidCampaignSpecError, match="mutable_artifacts"):
+            CampaignSpec.from_mapping(raw)
+
+    def test_v2_spec_rejects_a_missing_mutable_artifacts_key(self) -> None:
+        raw = make_spec_mapping()  # v1 shape: singular mutable_artifact, no set
+        raw["schema_version"] = 2
+        raw.pop("mutable_artifacts", None)
+        with pytest.raises(InvalidCampaignSpecError, match="mutable_artifacts"):
+            CampaignSpec.from_mapping(raw)
+
+    def test_v2_set_parses_multiple_members_in_order(self) -> None:
+        raw = make_spec_mapping()
+        raw["schema_version"] = 2
+        raw["mutable_artifacts"] = [
+            {"artifact_type": "prompt_bundle", "paths": ["prompts/system.md"]},
+            {"artifact_type": "workflow_graph", "paths": ["workflows/main.yaml"]},
+        ]
+        spec = CampaignSpec.from_mapping(raw)
+        assert [m.artifact_type for m in spec.mutable_artifacts.artifacts] == [
+            "prompt_bundle",
+            "workflow_graph",
+        ]
+        assert spec.mutable_artifacts.artifacts[1].paths == ("workflows/main.yaml",)
+
+    def test_v2_set_rejects_duplicate_member_classes(self) -> None:
+        raw = make_spec_mapping()
+        raw["schema_version"] = 2
+        raw["mutable_artifacts"] = [
+            {"artifact_type": "prompt_bundle", "paths": ["prompts/system.md"]},
+            {"artifact_type": "prompt_bundle", "paths": ["prompts/other.md"]},
+        ]
+        with pytest.raises(InvalidCampaignSpecError, match="duplicate artifact_type"):
+            CampaignSpec.from_mapping(raw)
+
+    def test_primary_is_the_incumbent_class_member_wherever_it_sits(self) -> None:
+        """The primary is the member of the incumbent's class — validation
+        guarantees exactly one such member, not that it comes first."""
+        raw = make_spec_mapping()
+        raw["schema_version"] = 2
+        raw["mutable_artifacts"] = [
+            {"artifact_type": "workflow_graph", "paths": ["workflows/main.yaml"]},
+            {"artifact_type": "prompt_bundle", "paths": ["prompts/system.md"]},
+        ]
+        spec = CampaignSpec.from_mapping(raw)
+        # `mutable_artifact` is the back-compat primary view over the set.
+        assert spec.mutable_artifact.artifact_type == "prompt_bundle"
+        assert spec.mutable_artifact.paths == ("prompts/system.md",)
+
+    def test_v2_member_paths_are_mask_validated(self) -> None:
+        raw = make_spec_mapping()
+        raw["schema_version"] = 2
+        raw["mutable_artifacts"] = [
+            {"artifact_type": "prompt_bundle", "paths": ["/etc/passwd"]},
+        ]
+        with pytest.raises(InvalidCampaignSpecError, match="relative"):
+            CampaignSpec.from_mapping(raw)
+
+
+class TestV1MigrationWindow:
+    def test_v1_spec_parses_during_the_window_as_a_single_member_set(self) -> None:
+        spec = make_spec()
+        assert spec.schema_version == 2  # upgraded at parse time
+        assert len(spec.mutable_artifacts.artifacts) == 1
+        assert spec.mutable_artifacts.artifacts[0].artifact_type == (spec.incumbent.artifact_type)
+
+    def test_v1_spec_is_rejected_after_the_migration_window(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import evoruntime.campaign.spec as spec_module
+
+        class FrozenDate(spec_module.date):  # type: ignore[name-defined]
+            @classmethod
+            def today(cls) -> spec_module.date:  # type: ignore[name-defined]
+                return spec_module.date(2026, 10, 28)  # type: ignore[attr-defined]
+
+        monkeypatch.setattr(spec_module, "date", FrozenDate)
+        with pytest.raises(InvalidCampaignSpecError, match="migration window closed"):
+            CampaignSpec.from_mapping(make_spec_mapping())  # fixture is a v1 document
+
+    def test_v1_spec_is_still_accepted_on_the_windows_last_day(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import evoruntime.campaign.spec as spec_module
+
+        class FrozenDate(spec_module.date):  # type: ignore[name-defined]
+            @classmethod
+            def today(cls) -> spec_module.date:  # type: ignore[name-defined]
+                return spec_module.date(2026, 10, 27)  # type: ignore[attr-defined]
+
+        monkeypatch.setattr(spec_module, "date", FrozenDate)
+        spec = CampaignSpec.from_mapping(make_spec_mapping())  # window's last day
+        assert spec.schema_version == 2
+
+    def test_unsupported_schema_version_is_refused(self) -> None:
+        raw = make_spec_mapping()
+        raw["schema_version"] = 3
+        with pytest.raises(InvalidCampaignSpecError, match="schema_version"):
+            CampaignSpec.from_mapping(raw)
+
+
+class TestPinAndSignV2:
+    def test_pinned_digest_covers_the_whole_mutable_set(self) -> None:
+        """Changing any member of the set changes the pinned digest — the
+        signature vouches for every member, not just the primary."""
+        spec = make_spec()
+        pinned = pin_and_sign(spec, Ed25519PrivateKey.generate())
+        widened = replace(
+            spec,
+            mutable_artifacts=MutableArtifactSet(
+                artifacts=(
+                    *spec.mutable_artifacts.artifacts,
+                    MutableArtifact(artifact_type="workflow_graph", paths=("workflows/main.yaml",)),
+                )
+            ),
+        )
+        repinned = pin_and_sign(widened, Ed25519PrivateKey.generate())
+        assert pinned.digest != repinned.digest
+
+    def test_pinned_v2_spec_verifies(self) -> None:
+        spec = make_spec()
+        pinned = pin_and_sign(spec, Ed25519PrivateKey.generate())
+        assert pinned.verify()

@@ -24,6 +24,14 @@ history, because the history *is* the checkpoint.
 from anything but a `PinnedCampaignSpec` whose digest and signature still
 verify — pin + sign happens before search begins, and the machine holds
 that line on every construction, including reconstruction.
+
+**No execution before analysis.** The PROPOSE→DEV_EVALUATE edge is where
+candidates start running. When an :class:`ExecutionGate` is installed,
+the orchestrator consults it *before* recording that edge — a gate that
+raises (e.g. the F3 static-analysis gate refusing a candidate with
+blocker violations) leaves the campaign in PROPOSE with no transition
+appended, so a blocked candidate cannot reach the execution plane
+through this machine.
 """
 
 from __future__ import annotations
@@ -181,6 +189,18 @@ class CampaignTransition:
         )
 
 
+class ExecutionGate(Protocol):
+    """Refusal hook consulted before the PROPOSE→DEV_EVALUATE edge is taken.
+
+    A clean return approves the edge; raising refuses it. The machine
+    never interprets gate state — the gate owns the refusal rule (F3's
+    static-analysis gate is the Phase 2 implementation), the machine owns
+    the ordering: gate first, transition record second, execution third.
+    """
+
+    def approve_execution(self) -> None: ...
+
+
 class TransitionSink(Protocol):
     """Where persisted transitions go. A DB table in production; memory in tests."""
 
@@ -233,6 +253,7 @@ class CampaignOrchestrator:
         initial_phase: CampaignPhase = CampaignPhase.DISCOVER,
         resume_target: CampaignPhase | None = None,
         transitions: tuple[CampaignTransition, ...] = (),
+        execution_gate: ExecutionGate | None = None,
     ) -> None:
         if not pinned_spec.verify():
             raise SpecTamperedError(
@@ -244,6 +265,7 @@ class CampaignOrchestrator:
         self._clock = clock
         self._phase = initial_phase
         self._resume_target = resume_target
+        self._execution_gate = execution_gate
         for transition in transitions:
             self._sink.append(transition)
 
@@ -286,6 +308,14 @@ class CampaignOrchestrator:
             raise InvalidTransitionError(
                 self._phase.value, to_phase.value, tuple(p.value for p in sorted(allowed))
             )
+        # The gate is consulted after the edge is known legal but before
+        # anything is recorded — a refusal must leave no trace in the log.
+        if (
+            self._phase is CampaignPhase.PROPOSE
+            and to_phase is CampaignPhase.DEV_EVALUATE
+            and self._execution_gate is not None
+        ):
+            self._execution_gate.approve_execution()
         return self._record(self._phase, to_phase, reason)
 
     def pause(self, *, reason: str = "") -> CampaignTransition:
@@ -372,6 +402,7 @@ class CampaignOrchestrator:
         *,
         sink: TransitionSink | None = None,
         clock: Clock | None = None,
+        execution_gate: ExecutionGate | None = None,
     ) -> CampaignOrchestrator:
         """Rebuild an orchestrator from a content-addressed checkpoint.
 
@@ -412,6 +443,7 @@ class CampaignOrchestrator:
             transitions=tuple(
                 CampaignTransition.from_canonical_dict(raw) for raw in payload["transitions"]
             ),
+            execution_gate=execution_gate,
         )
 
 
@@ -436,6 +468,7 @@ __all__ = [
     "CampaignPhase",
     "CampaignTransition",
     "CheckpointStore",
+    "ExecutionGate",
     "InMemoryTransitionSink",
     "TransitionSink",
     "allowed_transitions",

@@ -1,0 +1,18 @@
+fixture_id: sa_dynamic_exec
+description: Candidate executes dynamically-derived code via eval and importlib.
+category: dynamic_exec
+expected: block
+expected_violation: dynamic_exec
+allowed_paths:
+  - scripts/apply.py
+files:
+  - path: scripts/apply.py
+    content: |
+      """Variant that hides its logic behind dynamic execution."""
+      import importlib
+
+      def apply(rules: dict[str, str]) -> dict[str, str]:
+          payload = compile("rules.update({'injected': '1'})", "<candidate>", "exec")
+          exec(payload)
+          importlib.import_module("os")
+          return rules

@@ -274,6 +274,74 @@ class EvoApiClient:
         return self._request_dict("POST", "/v1/approvals", body)
 
     # ------------------------------------------------------------------
+    # review board (F10)
+    # ------------------------------------------------------------------
+
+    def create_approval_request(
+        self,
+        *,
+        kind: str,
+        justification: str,
+        campaign_id: str | None = None,
+        proposal_id: str | None = None,
+        plugin_id: str | None = None,
+        content_digest: str | None = None,
+        privileged_role: str | None = None,
+    ) -> dict[str, Any]:
+        """POST /v1/approvals/requests — open a review-board request."""
+        body: dict[str, Any] = {"kind": kind, "justification": justification}
+        for key, value in (
+            ("campaign_id", campaign_id),
+            ("proposal_id", proposal_id),
+            ("plugin_id", plugin_id),
+            ("content_digest", content_digest),
+            ("privileged_role", privileged_role),
+        ):
+            if value is not None:
+                body[key] = value
+        return self._request_dict("POST", "/v1/approvals/requests", body)
+
+    def list_approval_requests(self, *, campaign_id: str | None = None) -> list[dict[str, Any]]:
+        """GET /v1/approvals/requests, optionally scoped to a campaign."""
+        params = f"?campaign_id={campaign_id}" if campaign_id else ""
+        return self._request_list("GET", f"/v1/approvals/requests{params}")
+
+    def get_approval_request(self, request_id: str) -> dict[str, Any]:
+        """GET /v1/approvals/requests/{id} — one request with its decisions."""
+        return self._request_dict("GET", f"/v1/approvals/requests/{request_id}")
+
+    def decide_approval_request(
+        self, request_id: str, *, decision: str, note: str = ""
+    ) -> dict[str, Any]:
+        """POST /v1/approvals/requests/{id}/decisions — the verified caller decides."""
+        return self._request_dict(
+            "POST",
+            f"/v1/approvals/requests/{request_id}/decisions",
+            {"decision": decision, "note": note},
+        )
+
+    def admit_approval_request(self, request_id: str) -> dict[str, Any]:
+        """POST /v1/approvals/requests/{id}/admission — mint the signed record."""
+        return self._request_dict("POST", f"/v1/approvals/requests/{request_id}/admission", {})
+
+    def list_admissions(self, *, request_id: str | None = None) -> list[dict[str, Any]]:
+        """GET /v1/approvals/admissions — signed admission records (read-only)."""
+        params = f"?request_id={request_id}" if request_id else ""
+        return self._request_list("GET", f"/v1/approvals/admissions{params}")
+
+    def get_admission(self, record_id: str) -> dict[str, Any]:
+        """GET /v1/approvals/admissions/{id} — one signed admission record."""
+        return self._request_dict("GET", f"/v1/approvals/admissions/{record_id}")
+
+    def get_analysis_report(self, report_id: str) -> dict[str, Any]:
+        """GET /v1/approvals/analysis-reports/{id} — one signed F3 verdict."""
+        return self._request_dict("GET", f"/v1/approvals/analysis-reports/{report_id}")
+
+    def get_compensation_plan(self, plan_id: str) -> dict[str, Any]:
+        """GET /v1/approvals/compensation-plans/{id} — one signed F5 plan."""
+        return self._request_dict("GET", f"/v1/approvals/compensation-plans/{plan_id}")
+
+    # ------------------------------------------------------------------
     # releases
     # ------------------------------------------------------------------
 

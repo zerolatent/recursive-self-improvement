@@ -123,6 +123,21 @@ def _payload_master_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None
     get_lineage_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _evaluator_signing_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+    """A fresh evaluator signing key for every test, so the control-plane
+    API's signing dependency (which loads the key from the environment per
+    request) never falls back to a real secrets store. Same monkeypatch
+    pattern as `_payload_master_key`.
+    """
+    from evoruntime.security.signing import encode_private_key, generate_signing_key
+
+    monkeypatch.setenv(
+        "EVORUNTIME_EVALUATOR_SIGNING_KEY", encode_private_key(generate_signing_key())
+    )
+    yield
+
+
 @pytest.fixture
 def session_factory(database_url: str) -> Iterator[sessionmaker[Session]]:
     """Session factory for dataset and trace-ingest tests, against a database

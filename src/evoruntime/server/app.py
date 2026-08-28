@@ -6,8 +6,18 @@ from fastapi import FastAPI
 
 from evoruntime import __version__
 from evoruntime.server import ingest
+from evoruntime.server.dashboard import install_dashboard
 from evoruntime.server.errors import install_error_handlers
-from evoruntime.server.routers import datasets
+from evoruntime.server.routers import (
+    agents,
+    approvals,
+    campaigns,
+    candidates,
+    datasets,
+    evaluations,
+    evidence,
+    releases,
+)
 from evoruntime.server.settings import get_settings
 
 
@@ -38,6 +48,14 @@ def create_app() -> FastAPI:
     install_error_handlers(app)
     app.include_router(datasets.router)
     app.include_router(ingest.router)
+    app.include_router(campaigns.router)
+    app.include_router(candidates.router)
+    app.include_router(agents.router)
+    app.include_router(evidence.router)
+    app.include_router(evaluations.router)
+    app.include_router(approvals.router)
+    app.include_router(releases.router)
+    install_dashboard(app)
     return app
 
 

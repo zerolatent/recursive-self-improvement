@@ -23,6 +23,14 @@ class Settings(BaseSettings):
 
     service_name: str = "evoruntime-eval-plane"
 
+    #: Subject the evaluation plane signs attestations under.
+    evaluator_subject: str = "evoruntime-eval-plane"
+
+    #: Command (space-separated) that computes semantic diffs via the E2
+    #: artifact adapter process contract. Empty disables the diff endpoint
+    #: with a 503 rather than a silent empty result.
+    adapter_command: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -31,6 +31,7 @@ dev = [
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
     "pyyaml==6.0.3",
+    "types-pyyaml==6.0.12.20250822",
     "ruff==0.16.5",
 ]
 

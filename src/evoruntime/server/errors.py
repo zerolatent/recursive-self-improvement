@@ -1,4 +1,4 @@
-"""HTTP translation for dataset errors.
+"""HTTP translation for dataset and control-plane errors.
 
 Centralized so every endpoint answers the same way. In particular, both
 "no such handle" and "wrong tenant" must render as 404 — the service
@@ -11,17 +11,39 @@ from __future__ import annotations
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
+from evoruntime.api.errors import (
+    AdapterNotConfiguredError,
+    CampaignApiError,
+    CampaignNotFoundError,
+    DiffUnavailableError,
+    EvidenceNotFoundError,
+    InvalidCampaignTransitionError,
+    InvalidSpecError,
+    ProposalNotFoundError,
+    ReleaseNotFoundError,
+    ReleaseStateError,
+)
 from evoruntime.datasets.errors import (
     HandleNotFoundError,
     HoldoutAccessDeniedError,
     PartitionNotFoundError,
     PartitionStorageIdentityError,
 )
+from evoruntime.registry.errors import ArtifactNotFoundError
 
 
 async def handle_not_found(_: Request, exc: Exception) -> JSONResponse:
     """Render a missing handle/partition as 404 without echoing internals."""
     return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": "not found"})
+
+
+async def handle_campaign_not_found(_: Request, exc: Exception) -> JSONResponse:
+    """Render a missing campaign/candidate/evidence/release as 404.
+
+    The reason is echoed because it names only what the caller itself
+    asked for (a tenant-scoped lookup that missed) — enough for the CLI
+    to say which id was not found."""
+    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(exc)})
 
 
 async def handle_access_denied(_: Request, exc: Exception) -> JSONResponse:
@@ -44,9 +66,61 @@ async def handle_bad_partition(_: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
 
 
+async def handle_invalid_transition(_: Request, exc: Exception) -> JSONResponse:
+    """Render an illegal campaign lifecycle edge as 409 — the E3 state
+    machine owns the edge table, and a conflict is the honest answer."""
+    return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
+
+
+async def handle_invalid_spec(_: Request, exc: Exception) -> JSONResponse:
+    """Render an invalid spec/manifest as 400 with the validation reason."""
+    return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
+
+
+async def handle_release_state(_: Request, exc: Exception) -> JSONResponse:
+    """Render an illegal release state move (promote non-canary, roll back
+    a dead release) as 409."""
+    return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc)})
+
+
+async def handle_diff_unavailable(_: Request, exc: Exception) -> JSONResponse:
+    """Render an adapter that cannot produce a diff as 422."""
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, content={"detail": str(exc)}
+    )
+
+
+async def handle_adapter_not_configured(_: Request, exc: Exception) -> JSONResponse:
+    """Render a deployment without an adapter as 503 — the endpoint exists,
+    the deployment cannot serve it."""
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"detail": str(exc)}
+    )
+
+
+async def handle_campaign_api_error(_: Request, exc: Exception) -> JSONResponse:
+    """Fallback for remaining control-plane errors: 400 with the reason."""
+    if not isinstance(exc, CampaignApiError):  # pragma: no cover - registered per type
+        raise exc
+    return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
+
+
 def install_error_handlers(app: FastAPI) -> None:
-    """Register the dataset error handlers on the application."""
+    """Register the dataset and control-plane error handlers on the app."""
     app.add_exception_handler(HandleNotFoundError, handle_not_found)
     app.add_exception_handler(PartitionNotFoundError, handle_not_found)
+    # Evidence and evaluations hang off registered artifacts; a dangling
+    # digest is refused at the API boundary as 404, not left to the FK.
+    app.add_exception_handler(ArtifactNotFoundError, handle_not_found)
     app.add_exception_handler(HoldoutAccessDeniedError, handle_access_denied)
     app.add_exception_handler(PartitionStorageIdentityError, handle_bad_partition)
+    app.add_exception_handler(CampaignNotFoundError, handle_campaign_not_found)
+    app.add_exception_handler(ProposalNotFoundError, handle_campaign_not_found)
+    app.add_exception_handler(EvidenceNotFoundError, handle_campaign_not_found)
+    app.add_exception_handler(ReleaseNotFoundError, handle_campaign_not_found)
+    app.add_exception_handler(InvalidCampaignTransitionError, handle_invalid_transition)
+    app.add_exception_handler(InvalidSpecError, handle_invalid_spec)
+    app.add_exception_handler(ReleaseStateError, handle_release_state)
+    app.add_exception_handler(DiffUnavailableError, handle_diff_unavailable)
+    app.add_exception_handler(AdapterNotConfiguredError, handle_adapter_not_configured)
+    app.add_exception_handler(CampaignApiError, handle_campaign_api_error)

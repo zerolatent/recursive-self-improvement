@@ -1,4 +1,4 @@
-"""Request-scoped dependencies: the caller's principal and the dataset services.
+"""Request-scoped dependencies: the caller's principal and the services.
 
 The principal is built from workload-identity headers that a mesh/sidecar
 is expected to set and strip from untrusted ingress. That is a Phase 0
@@ -10,6 +10,7 @@ What is *not* a placeholder is everything downstream: the authorization
 rules, ledger writes, and denial logging all act on the `Principal`
 produced here, so swapping in real identity later changes this module and
 nothing else.
+
 """
 
 from __future__ import annotations
@@ -17,13 +18,17 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Annotated
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session, sessionmaker
 
+from evoruntime.api.service import CampaignApiService
 from evoruntime.core.principal import Principal
 from evoruntime.datasets.service import DatasetService, HoldoutService
 from evoruntime.db.base import build_engine, build_session_factory
 from evoruntime.security.identities import WorkloadIdentity, WorkloadRole
+from evoruntime.security.signing import SigningKeyError, load_evaluator_signing_key
+from evoruntime.server.settings import get_settings
 
 IDENTITY_HEADER = "x-evoruntime-identity"
 ROLE_HEADER = "x-evoruntime-role"
@@ -79,6 +84,34 @@ def get_principal(
     return Principal(identity=identity, tenant_id=x_evoruntime_tenant)
 
 
+def get_campaign_service(session_factory: SessionFactoryDep) -> CampaignApiService:
+    """Return the FR-014 control-plane service bound to this deployment.
+
+    The signing key is the evaluation plane's own (loaded through the same
+    gated loader every other consumer uses), and the artifact adapter
+    command comes from deployment settings — never from a request.
+    """
+    settings = get_settings()
+    server_identity = WorkloadIdentity(
+        role=WorkloadRole.EVALUATOR, subject=settings.evaluator_subject
+    )
+    try:
+        signing_key: Ed25519PrivateKey = load_evaluator_signing_key(server_identity)
+    except SigningKeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"evaluation-plane signing key is not configured: {exc}",
+        ) from exc
+    adapter_command = tuple(settings.adapter_command.split()) if settings.adapter_command else ()
+    return CampaignApiService(
+        session_factory,
+        signing_key=signing_key,
+        evaluator_subject=settings.evaluator_subject,
+        adapter_command=adapter_command,
+    )
+
+
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 DatasetServiceDep = Annotated[DatasetService, Depends(get_dataset_service)]
 HoldoutServiceDep = Annotated[HoldoutService, Depends(get_holdout_service)]
+CampaignServiceDep = Annotated[CampaignApiService, Depends(get_campaign_service)]

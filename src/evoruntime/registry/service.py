@@ -27,6 +27,7 @@ read from the `artifact_current_status` projection view, never stored.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from sqlalchemy import select, text
@@ -37,6 +38,7 @@ from evoruntime.db.models.registry import (
     ArtifactContent,
     ArtifactStatusEvent,
     EvaluationAttestation,
+    ProposalMemberRecord,
     ProposalRecord,
     ReleaseManifest,
 )
@@ -209,6 +211,133 @@ class RegistryService:
         self._session.add(proposal)
         self._session.flush()
         return proposal
+
+    # ------------------------------------------------------------------
+    # Composite proposals (Phase 2, F4)
+    # ------------------------------------------------------------------
+
+    def record_composite_proposal(
+        self,
+        *,
+        tenant_id: str,
+        proposed_digest: str,
+        strategy_id: str,
+        members: Sequence[Mapping[str, Any]],
+        campaign_id: str | None = None,
+        proposal_metadata: dict[str, Any] | None = None,
+    ) -> ProposalRecord:
+        """Record a composite proposal: one `proposal_records` row carrying
+        the composite digest, plus one `proposal_members` row per typed
+        member, in the given order (positions 0..n-1).
+
+        The composite digest over the ordered member set is computed by the
+        caller (the plugins layer owns that digest; the registry must not
+        import it — the dependency direction is plugins -> registry). Each
+        member's `member_digest` and optional `parent_digest` must resolve
+        to registered artifacts, so the multi-parent lineage edges the
+        member rows carry are real edges.
+
+        Members are mappings with keys: `artifact_type`, `member_digest`,
+        `parent_digest` (optional), `patch` (optional mapping),
+        `declared_executables` (optional sequence).
+        """
+        if not strategy_id or not strategy_id.strip():
+            raise InvalidProposalError(
+                "strategy_id must be a non-empty identifier — a proposal without "
+                "a strategy breaks lineage attribution"
+            )
+        if not members:
+            raise InvalidProposalError(
+                "a composite proposal must carry at least one member — an empty "
+                "member set has nothing for the composite digest to bind"
+            )
+        # Member shape is validated up front, before the circular check, so
+        # a malformed member is reported as an InvalidProposalError even
+        # when it would also trip the circular-metadata check. The validated
+        # (position, member, artifact_type, member_digest) tuples carry the
+        # narrowed types into the recording loop.
+        validated_members: list[tuple[int, Mapping[str, Any], str, str]] = []
+        for position, member in enumerate(members):
+            artifact_type = member.get("artifact_type")
+            member_digest = member.get("member_digest")
+            if not isinstance(artifact_type, str) or not artifact_type.strip():
+                raise InvalidProposalError(
+                    f"member at position {position} must declare a non-empty artifact_type"
+                )
+            if not isinstance(member_digest, str) or not member_digest.strip():
+                raise InvalidProposalError(
+                    f"member at position {position} must declare a non-empty member_digest"
+                )
+            validated_members.append((position, member, artifact_type, member_digest))
+        if proposed_digest in {m["member_digest"] for m in members if "member_digest" in m}:
+            raise CircularMetadataError(
+                f"composite proposal {proposed_digest!r} cannot list its own digest "
+                "as a member digest — circular metadata"
+            )
+        self._require_artifact(tenant_id=tenant_id, digest=proposed_digest)
+
+        proposal = ProposalRecord(
+            tenant_id=tenant_id,
+            proposal_id=canonical.new_proposal_id(),
+            proposed_digest=proposed_digest,
+            parent_digest=None,  # composite parents live on the member rows
+            strategy_id=strategy_id,
+            campaign_id=campaign_id,
+            proposal_metadata=dict(proposal_metadata or {}),
+        )
+        self._session.add(proposal)
+        self._session.flush()  # proposal_id must exist before member FKs resolve
+
+        for position, member, artifact_type, member_digest in validated_members:
+            parent_digest = member.get("parent_digest")
+            if parent_digest is not None and not isinstance(parent_digest, str):
+                raise InvalidProposalError(
+                    f"member at position {position} has a non-string parent_digest"
+                )
+            if parent_digest == member_digest:
+                raise CircularMetadataError(
+                    f"member at position {position} ({member_digest!r}) cannot parent "
+                    "itself — circular metadata"
+                )
+            self._require_artifact(tenant_id=tenant_id, digest=member_digest)
+            if parent_digest is not None:
+                self._require_artifact(tenant_id=tenant_id, digest=parent_digest)
+            patch = member.get("patch") or {}
+            if not isinstance(patch, dict):
+                raise InvalidProposalError(f"member at position {position} has a non-mapping patch")
+            declared = member.get("declared_executables") or []
+            if not isinstance(declared, (list, tuple)):
+                raise InvalidProposalError(
+                    f"member at position {position} has non-sequence declared_executables"
+                )
+            self._session.add(
+                ProposalMemberRecord(
+                    tenant_id=tenant_id,
+                    proposal_id=proposal.proposal_id,
+                    position=position,
+                    artifact_type=artifact_type,
+                    member_digest=member_digest,
+                    parent_digest=parent_digest,
+                    patch=dict(patch),
+                    declared_executables=list(declared),
+                )
+            )
+        self._session.flush()
+        return proposal
+
+    def get_proposal_members(
+        self, *, tenant_id: str, proposal_id: str
+    ) -> list[ProposalMemberRecord]:
+        """The member rows of a composite proposal, in composite order."""
+        stmt = (
+            select(ProposalMemberRecord)
+            .where(
+                ProposalMemberRecord.tenant_id == tenant_id,
+                ProposalMemberRecord.proposal_id == proposal_id,
+            )
+            .order_by(ProposalMemberRecord.position.asc())
+        )
+        return list(self._session.scalars(stmt))
 
     # ------------------------------------------------------------------
     # EvaluationAttestation

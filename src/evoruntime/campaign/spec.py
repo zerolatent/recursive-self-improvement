@@ -8,13 +8,23 @@ plan, and stopping rules are all fixed here — because a comparison whose
 alpha, budget, or mutation surface is chosen after seeing the deltas has
 no error rate at all.
 
-Two disciplines this module enforces:
+Three disciplines this module enforces:
 
 **Pin + sign before search.** `pin_and_sign` hashes the spec's canonical
 bytes and signs them with the evaluator's Ed25519 key. The orchestrator
 (:mod:`evoruntime.campaign.machine`) refuses to run anything but a pinned
 spec whose digest and signature still verify — a spec edited after the
 fact is not a preregistration, it is a forgery of one.
+
+**Schema v2 (Phase 2, F4) and the v1 migration window.** The singular
+`mutable_artifact` became a `MutableArtifactSet` (>= 1 masked artifacts,
+one primary matching the incumbent). v1 documents are accepted until
+`V1_MIGRATION_WINDOW_END` (2026-10-27, sixty days after the Phase 2
+release branch was cut on 2026-08-28 — see ``docs/campaign-spec-v2.md``);
+they are upgraded to the v2 shape at parse time, so a v1 document and the
+equivalent v2 document pin to the *same* digest. After the window closes
+v1 specs are rejected: the window is for authoring migration, not a
+permanent dual-format license.
 
 **The holdout is a handle, never content.** Dataset bindings reference the
 holdout through the D5 sealed-handle scheme (`holdout://...`). A spec that
@@ -27,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Protocol
 
 from evoruntime.campaign.errors import InvalidCampaignSpecError
@@ -38,11 +49,20 @@ from evoruntime.eval.statistics import MIN_BOOTSTRAP_ITERATIONS, MultiplicityMet
 from evoruntime.plugins.manifest import PluginArtifactType
 from evoruntime.security.signing import DetachedSignature, sign, verify
 
-SUPPORTED_SPEC_VERSION = 1
-"""The only campaign-spec schema version this runtime understands.
+SUPPORTED_SPEC_VERSION = 2
+"""The campaign-spec schema version this runtime understands.
 
-A spec carries its version explicitly so a future shape change is a
-refusal with a clear message, not a silent misread of an old document.
+A spec carries its version explicitly so a shape change is a refusal with
+a clear message, not a silent misread of an old document.
+"""
+
+V1_MIGRATION_WINDOW_END = date(2026, 10, 27)
+"""Last day `schema_version: 1` campaign specs are accepted.
+
+Sixty days after the Phase 2 release branch was cut (2026-08-28). Until
+this date a v1 document is upgraded to the v2 shape at parse time and
+pins to the v2 digest; after it, v1 specs are refused. Documented in
+``docs/campaign-spec-v2.md``.
 """
 
 _DIGEST_PREFIX = "sha256:"
@@ -123,6 +143,40 @@ class MutableArtifact:
     def to_canonical_dict(self) -> dict[str, Any]:
         """Canonical JSON form of this artifact binding."""
         return {"artifact_type": self.artifact_type, "paths": list(self.paths)}
+
+
+@dataclass(frozen=True, slots=True)
+class MutableArtifactSet:
+    """The campaign's full mutation surface: one or more masked artifacts.
+
+    Phase 2 (F4) replaces the singular mutable artifact: a campaign may
+    change several artifact classes in one composite candidate, each under
+    its own mask. Exactly one member is the *primary* — the one whose
+    class matches the incumbent release's artifact type, the class the
+    campaign is nominally optimizing (enforced by :class:`CampaignSpec`).
+    """
+
+    artifacts: tuple[MutableArtifact, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "artifacts", tuple(self.artifacts))
+        if not self.artifacts:
+            raise InvalidCampaignSpecError(
+                "a campaign must declare at least one mutable artifact — an empty "
+                "mutation surface would make every candidate a violation"
+            )
+        types = [artifact.artifact_type for artifact in self.artifacts]
+        duplicates = sorted({t for t in types if types.count(t) > 1})
+        if duplicates:
+            raise InvalidCampaignSpecError(
+                f"duplicate artifact_type in the mutable artifact set: "
+                f"{', '.join(duplicates)} — one mask per artifact class"
+            )
+
+    def to_canonical_dict(self) -> list[dict[str, Any]]:
+        """Canonical JSON form of the mutable artifact set (order-pinned):
+        the ordered list of member bindings, exactly the v2 authoring shape."""
+        return [artifact.to_canonical_dict() for artifact in self.artifacts]
 
 
 def _validate_mask_path(path: str) -> None:
@@ -359,7 +413,7 @@ class CampaignSpec:
     schema_version: int
     name: str
     incumbent: IncumbentBinding
-    mutable_artifact: MutableArtifact
+    mutable_artifacts: MutableArtifactSet
     strategy_plugin: StrategyBinding
     arms: tuple[Arm, ...]
     datasets: DatasetBindings
@@ -391,17 +445,24 @@ class CampaignSpec:
             )
 
     def _validate_artifact_consistency(self) -> None:
-        """The campaign improves the incumbent's artifact type — nothing else.
+        """Exactly one mutable artifact matches the incumbent's class.
 
-        A spec whose mutable artifact differs from the incumbent's would
-        diff candidates against a release they are not comparable to.
+        The primary member is the class the campaign optimizes — a spec
+        whose mutable set does not contain the incumbent's artifact type
+        would diff candidates against a release they are not comparable
+        to; more than one member of that class would leave "the primary"
+        ambiguous.
         """
-        if self.mutable_artifact.artifact_type != self.incumbent.artifact_type:
+        matching = [
+            artifact
+            for artifact in self.mutable_artifacts.artifacts
+            if artifact.artifact_type == self.incumbent.artifact_type
+        ]
+        if len(matching) != 1:
             raise InvalidCampaignSpecError(
-                f"mutable artifact_type {self.mutable_artifact.artifact_type!r} does not "
-                f"match the incumbent release's artifact_type "
-                f"{self.incumbent.artifact_type!r} — a campaign optimizes the "
-                "incumbent's artifact class"
+                f"the mutable artifact set must contain exactly one artifact of the "
+                f"incumbent's artifact_type {self.incumbent.artifact_type!r} (the "
+                f"primary), found {len(matching)}"
             )
 
     def _validate_arms(self) -> None:
@@ -433,6 +494,20 @@ class CampaignSpec:
                     f"found {kinds.count(kind)}"
                 )
 
+    @property
+    def mutable_artifact(self) -> MutableArtifact:
+        """The primary mutable artifact (the incumbent's class).
+
+        Back-compat view over the v2 set: the Phase 1 singular binding is
+        exactly the primary member of the v2 shape. Validation guarantees
+        exactly one member of this class exists.
+        """
+        return next(
+            artifact
+            for artifact in self.mutable_artifacts.artifacts
+            if artifact.artifact_type == self.incumbent.artifact_type
+        )
+
     # -- canonical form, digest, pinning -----------------------------------
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -444,10 +519,10 @@ class CampaignSpec:
         order or enum reprs.
         """
         return {
-            "schema_version": self.schema_version,
+            "schema_version": SUPPORTED_SPEC_VERSION,
             "name": self.name,
             "incumbent": self.incumbent.to_canonical_dict(),
-            "mutable_artifact": self.mutable_artifact.to_canonical_dict(),
+            "mutable_artifacts": self.mutable_artifacts.to_canonical_dict(),
             "strategy_plugin": self.strategy_plugin.to_canonical_dict(),
             "arms": [
                 {
@@ -504,8 +579,9 @@ class CampaignSpec:
     def from_mapping(cls, raw: dict[str, Any]) -> CampaignSpec:
         """Build a spec from an already-parsed mapping (tests, API payloads)."""
         try:
+            schema_version = _require_int(raw["schema_version"], "schema_version")
             return cls(
-                schema_version=_require_int(raw["schema_version"], "schema_version"),
+                schema_version=SUPPORTED_SPEC_VERSION,
                 name=_require_str(raw["name"], "name"),
                 incumbent=IncumbentBinding(
                     release_manifest_digest=_require_str(
@@ -515,15 +591,7 @@ class CampaignSpec:
                         raw["incumbent"]["artifact_type"], "incumbent artifact_type"
                     ),
                 ),
-                mutable_artifact=MutableArtifact(
-                    artifact_type=_require_str(
-                        raw["mutable_artifact"]["artifact_type"], "mutable artifact_type"
-                    ),
-                    paths=tuple(
-                        _require_str(path, "mutable path")
-                        for path in raw["mutable_artifact"]["paths"]
-                    ),
-                ),
+                mutable_artifacts=_parse_mutable_artifacts(raw, schema_version),
                 strategy_plugin=StrategyBinding(
                     plugin_id=_require_str(raw["strategy_plugin"]["plugin_id"], "plugin_id"),
                     pinned_image=_require_str(
@@ -605,6 +673,53 @@ class CampaignSpec:
             ) from exc
 
 
+def _parse_mutable_artifacts(raw: dict[str, Any], schema_version: int) -> MutableArtifactSet:
+    """Parse the mutable artifact set from a v2 mapping, or upgrade a v1 one.
+
+    v2 documents carry `mutable_artifacts` — an ordered list of
+    `{artifact_type, paths}` bindings. v1 documents carry the singular
+    `mutable_artifact`; during the migration window that binding becomes
+    the set's single (primary) member, so a v1 document and the equivalent
+    v2 document construct identical specs and pin to the same digest.
+    After `V1_MIGRATION_WINDOW_END` v1 documents are refused.
+    """
+    if schema_version == SUPPORTED_SPEC_VERSION:
+        entries = raw.get("mutable_artifacts")
+        if not isinstance(entries, list) or not entries:
+            raise InvalidCampaignSpecError(
+                "a v2 campaign spec must declare 'mutable_artifacts' — a non-empty "
+                "ordered list of {artifact_type, paths} bindings"
+            )
+        return MutableArtifactSet(
+            artifacts=tuple(
+                MutableArtifact(
+                    artifact_type=_require_str(entry["artifact_type"], "mutable artifact_type"),
+                    paths=tuple(_require_str(path, "mutable path") for path in entry["paths"]),
+                )
+                for entry in entries
+            )
+        )
+    if schema_version == 1:
+        if date.today() > V1_MIGRATION_WINDOW_END:
+            raise InvalidCampaignSpecError(
+                f"campaign spec schema_version 1 is no longer accepted: the v1 "
+                f"migration window closed on {V1_MIGRATION_WINDOW_END.isoformat()} — "
+                "re-author the spec with schema_version 2 and a 'mutable_artifacts' set"
+            )
+        legacy = raw.get("mutable_artifact")
+        if not isinstance(legacy, dict):
+            raise InvalidCampaignSpecError("a v1 campaign spec must declare 'mutable_artifact'")
+        legacy_artifact = MutableArtifact(
+            artifact_type=_require_str(legacy["artifact_type"], "mutable artifact_type"),
+            paths=tuple(_require_str(path, "mutable path") for path in legacy["paths"]),
+        )
+        return MutableArtifactSet(artifacts=(legacy_artifact,))
+    raise InvalidCampaignSpecError(
+        f"unsupported campaign spec schema_version {schema_version!r} "
+        f"(this runtime supports {SUPPORTED_SPEC_VERSION})"
+    )
+
+
 class _PrivateKey(Protocol):
     """Structural type for an Ed25519 private key (avoids a hard crypto import)."""
 
@@ -667,12 +782,14 @@ def _require_str(value: Any, what: str) -> str:
 
 __all__ = [
     "SUPPORTED_SPEC_VERSION",
+    "V1_MIGRATION_WINDOW_END",
     "CampaignBudgets",
     "CampaignSpec",
     "DatasetBindings",
     "EvaluatorBinding",
     "IncumbentBinding",
     "MutableArtifact",
+    "MutableArtifactSet",
     "PinnedCampaignSpec",
     "PromotionPolicyRef",
     "StatisticsPlan",

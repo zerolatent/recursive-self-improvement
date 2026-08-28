@@ -123,8 +123,78 @@ class ProposalRecord(Base):
             ["artifact_content.tenant_id", "artifact_content.digest"],
             name="fk_proposal_records_parent_artifact",
         ),
+        # Composite proposals (F4) reference a proposal row from
+        # proposal_members with a tenant-scoped FK; this constraint is the
+        # unique target it requires (proposal_id alone is already unique).
+        UniqueConstraint("tenant_id", "proposal_id", name="uq_proposal_records_tenant_proposal"),
         Index("ix_proposal_records_tenant_id", "tenant_id"),
         Index("ix_proposal_records_proposed_digest", "tenant_id", "proposed_digest"),
+    )
+
+
+class ProposalMemberRecord(Base):
+    """One typed member of a composite proposal (Phase 2, F4).
+
+    A composite proposal is an ordered tuple of members, each carrying its
+    own artifact type, member digest, patch, and declared executables.
+    The composite digest lives on the `proposal_records` row
+    (`proposed_digest`); this table carries the member set that digest
+    binds, so the single-digest single-parent shape of `proposal_records`
+    loses no information: each member records its own `parent_digest`,
+    and the composite's parent set is the union of its members' parents
+    (multi-parent lineage edges, one row per member).
+
+    Append-only like the proposal it belongs to — a proposal's history is
+    evidence, and the digest over the member set is only meaningful if
+    the member rows cannot be edited after the fact.
+    """
+
+    __tablename__ = "proposal_members"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[str] = mapped_column(nullable=False)
+    proposal_id: Mapped[str] = mapped_column(nullable=False)
+    #: Position in the composite's ordered member tuple — the digest is
+    #: order-sensitive, so the stored order must be authoritative.
+    position: Mapped[int] = mapped_column(nullable=False)
+    artifact_type: Mapped[str] = mapped_column(nullable=False)
+    member_digest: Mapped[str] = mapped_column(nullable=False)
+    #: This member's own lineage edge (None for a fresh member). The
+    #: composite's parent set is the union across members.
+    parent_digest: Mapped[str | None] = mapped_column(nullable=True)
+    patch: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    declared_executables: Mapped[list[object]] = mapped_column(JSONB, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint("position >= 0", name="ck_proposal_members_position_nonnegative"),
+        CheckConstraint(
+            "parent_digest IS NULL OR parent_digest <> member_digest",
+            name="ck_proposal_members_no_self_parent",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "proposal_id"],
+            ["proposal_records.tenant_id", "proposal_records.proposal_id"],
+            name="fk_proposal_members_proposal",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "member_digest"],
+            ["artifact_content.tenant_id", "artifact_content.digest"],
+            name="fk_proposal_members_member_artifact",
+        ),
+        ForeignKeyConstraint(
+            ["tenant_id", "parent_digest"],
+            ["artifact_content.tenant_id", "artifact_content.digest"],
+            name="fk_proposal_members_parent_artifact",
+        ),
+        UniqueConstraint(
+            "tenant_id", "proposal_id", "position", name="uq_proposal_members_position"
+        ),
+        Index("ix_proposal_members_tenant_id", "tenant_id"),
+        Index("ix_proposal_members_member_digest", "tenant_id", "member_digest"),
+        Index("ix_proposal_members_proposal_id", "tenant_id", "proposal_id"),
     )
 
 

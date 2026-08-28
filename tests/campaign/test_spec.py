@@ -322,6 +322,8 @@ class TestPinAndSignV2:
         spec = make_spec()
         pinned = pin_and_sign(spec, Ed25519PrivateKey.generate())
         assert pinned.verify()
+
+
 class TestCascadeEvaluatorBindings:
     """F6 cascade fields on EvaluatorBinding: defaults, validation, canonical form."""
 

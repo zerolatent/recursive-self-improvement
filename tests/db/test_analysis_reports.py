@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from evoruntime.db.models.analysis import AnalysisReport
@@ -50,12 +50,13 @@ def test_append_only_trigger_refuses_update(db_session: Session) -> None:
     tenant = f"{TENANT}_{uuid.uuid4().hex[:8]}"
     _persisted_report(db_session, tenant=tenant, outcome="pass")
 
-    with pytest.raises(IntegrityError, match="immutable"):
+    with pytest.raises(ProgrammingError) as excinfo:
         db_session.execute(
             AnalysisReport.__table__.update()
             .where(AnalysisReport.tenant_id == tenant)
             .values(outcome="block")
         )
+    assert "immutable" in str(excinfo.value)
     db_session.rollback()
 
 
@@ -63,10 +64,11 @@ def test_append_only_trigger_refuses_delete(db_session: Session) -> None:
     tenant = f"{TENANT}_{uuid.uuid4().hex[:8]}"
     _persisted_report(db_session, tenant=tenant, outcome="pass")
 
-    with pytest.raises(IntegrityError, match="immutable"):
+    with pytest.raises(ProgrammingError) as excinfo:
         db_session.execute(
             AnalysisReport.__table__.delete().where(AnalysisReport.tenant_id == tenant)
         )
+    assert "immutable" in str(excinfo.value)
     db_session.rollback()
 
 

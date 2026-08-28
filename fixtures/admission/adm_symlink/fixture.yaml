@@ -1,0 +1,9 @@
+fixture_id: adm_symlink
+category: symlink
+description: Symlink pointing at a sensitive host file; symlinks are never admitted.
+expected: reject
+expected_violation: symlink
+entries:
+  - path: shadow_link
+    kind: symlink
+    target: /etc/shadow

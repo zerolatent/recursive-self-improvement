@@ -1,0 +1,9 @@
+fixture_id: adm_path_traversal_parent
+category: path_traversal
+description: Output path escapes the candidate root with a leading '..' segment.
+expected: reject
+expected_violation: path_traversal
+entries:
+  - path: ../../etc/passwd
+    kind: file
+    size_bytes: 128

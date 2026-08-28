@@ -1,0 +1,9 @@
+fixture_id: adm_path_traversal_nested
+category: path_traversal
+description: Traversal hidden under a legitimate-looking directory prefix.
+expected: reject
+expected_violation: path_traversal
+entries:
+  - path: docs/../../../etc/cron.d/evil
+    kind: file
+    size_bytes: 64

@@ -58,16 +58,18 @@ class InvalidPromotionPolicyError(SelectionError):
 
 
 class TierRejectedError(SelectionError):
-    """A resolved release warrants tier-3+ authority, which Phase 1 rejects.
+    """A resolved release warrants tier-3/4 authority without its approvals.
 
-    The tier-3+ paths exist in the policy engine (they are computed, not
-    absent) but no Phase 1 artifact class can reach them — the engine
-    rejects the promotion loudly instead of silently promoting.
+    The tier-3/4 paths exist in the policy engine (they are computed, not
+    absent) and Phase 2 admits them — but only through the F2 gate: tier 3
+    with two-person approval, tier 4 with human sign-off and manual
+    initiation. Without that evidence the promotion is rejected loudly,
+    never silently promoted or downgraded.
     """
 
     def __init__(self, tier: int, detail: str) -> None:
         self.tier = tier
-        super().__init__(f"authority tier {tier} is rejected for Phase 1: {detail}")
+        super().__init__(f"authority tier {tier} is rejected: {detail}")
 
 
 class RecursiveClaimDeniedError(SelectionError):

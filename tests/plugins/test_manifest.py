@@ -9,6 +9,7 @@ from evoruntime.plugins.manifest import (
     CompatibilityRange,
     NetworkMode,
     PermissionRequest,
+    PluginArtifactType,
     check_compatibility,
     effective_grant,
     validate_manifest,
@@ -73,8 +74,55 @@ class TestCompatibilityRange:
         assert check_compatibility(compat, "99.0.0")
 
     def test_inverted_range_is_rejected_at_construction(self) -> None:
-        with pytest.raises(ValidationError, match="must not be lower"):
+        with pytest.raises(ValidationError, match="max_runtime"):
             CompatibilityRange(min_runtime="2.0.0", max_runtime="1.0.0")
+
+
+class TestExecutionRequirements:
+    """F2: executable classes refuse admission without declared
+    executables + minimum tier."""
+
+    def test_executable_class_without_execution_requirements_is_refused(self) -> None:
+        for artifact_type in (
+            PluginArtifactType.WORKFLOW_GRAPH,
+            PluginArtifactType.TOOL_SPEC,
+            PluginArtifactType.SKILL_SCRIPT,
+            PluginArtifactType.ALGORITHM,
+            PluginArtifactType.HARNESS_PATCH,
+        ):
+            with pytest.raises(ValidationError, match="execution_requirements"):
+                make_manifest(artifact_types=(artifact_type,))
+
+    def test_executable_class_with_empty_executables_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="executables"):
+            make_manifest(
+                artifact_types=(PluginArtifactType.SKILL_SCRIPT,),
+                execution_requirements={"executables": (), "minimum_tier": 3},
+            )
+
+    def test_executable_class_with_out_of_range_tier_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="minimum_tier"):
+            make_manifest(
+                artifact_types=(PluginArtifactType.HARNESS_PATCH,),
+                execution_requirements={"executables": ("patch.sh",), "minimum_tier": 5},
+            )
+
+    def test_executable_class_with_declared_requirements_admits(self) -> None:
+        manifest = make_manifest(
+            artifact_types=(PluginArtifactType.SKILL_SCRIPT,),
+            execution_requirements={
+                "executables": ("scripts/run.sh",),
+                "minimum_tier": 3,
+            },
+        )
+        assert manifest.execution_requirements is not None
+        assert manifest.execution_requirements.minimum_tier == 3
+        assert validate_manifest(manifest, RUNTIME_VERSION) == ()
+
+    def test_text_only_class_needs_no_execution_requirements(self) -> None:
+        manifest = make_manifest()
+        assert manifest.execution_requirements is None
+        assert validate_manifest(manifest, RUNTIME_VERSION) == ()
 
 
 class TestEffectiveGrant:

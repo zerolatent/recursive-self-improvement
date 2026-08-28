@@ -5,10 +5,11 @@ authority (PRD §12.5, §12.6, §13.3, FR-011)."""
 from __future__ import annotations
 
 from evoruntime.selection.authority import (
-    PHASE_1_MAX_TIER,
+    APPROVAL_FREE_MAX_TIER,
     AuthorityTier,
     ResolvedRelease,
-    assert_phase1_admissible,
+    TierApprovalEvidence,
+    assert_phase2_admissible,
     resolve_authority_tier,
 )
 from evoruntime.selection.errors import (
@@ -75,7 +76,7 @@ __all__ = [
     "CONDITION_STATISTICAL",
     "CONDITION_TRANSFER_SCOPE",
     "NOMINATE_EVENT_KIND",
-    "PHASE_1_MAX_TIER",
+    "APPROVAL_FREE_MAX_TIER",
     "RECURSIVE_CLAIM_ENABLED",
     "RECURSIVE_IMPROVEMENT_LABEL",
     "REJECT_EVENT_KIND",
@@ -108,10 +109,11 @@ __all__ = [
     "ResolvedRelease",
     "SelectionError",
     "SelectionObservation",
+    "TierApprovalEvidence",
     "TierRejectedError",
     "TrustedSelector",
     "assert_label_allowed",
-    "assert_phase1_admissible",
+    "assert_phase2_admissible",
     "claim_label",
     "evaluate_promotion",
     "evaluate_recursive_claim",

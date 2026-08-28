@@ -41,7 +41,8 @@ from evoruntime.eval.statistics import (
 )
 from evoruntime.selection.authority import (
     ResolvedRelease,
-    assert_phase1_admissible,
+    TierApprovalEvidence,
+    assert_phase2_admissible,
     resolve_authority_tier,
 )
 from evoruntime.selection.errors import InvalidPromotionPolicyError
@@ -255,15 +256,17 @@ def evaluate_promotion(
     *,
     release: ResolvedRelease,
     recursive_claim: RecursiveClaimEvidence | None = None,
+    tier_approvals: TierApprovalEvidence | None = None,
 ) -> PromotionDecision:
     """Apply the six §12.5 conditions to one candidate's evidence.
 
     Raises:
-        TierRejectedError: the resolved release warrants tier-3+ authority,
-            which Phase 1 rejects before any condition is evaluated.
+        TierRejectedError: the resolved release warrants tier-3/4 authority
+            and carries no (or malformed) approval evidence — the F2 gate
+            refuses the promotion before any condition is evaluated.
     """
     tier = resolve_authority_tier(release)
-    assert_phase1_admissible(tier)
+    assert_phase2_admissible(tier, tier_approvals)
 
     # Multiplicity: every candidate arm in the family compares against the
     # same incumbent, so the interval is built at the family-split alpha.

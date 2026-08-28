@@ -1,0 +1,10 @@
+id: loc_slugify
+title: slugify leaves a trailing hyphen on blog and wiki URLs
+failure_category: localization
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: publishing.py

@@ -1,0 +1,79 @@
+[project]
+name = "evoruntime"
+version = "0.1.0"
+description = "EvoRuntime — governed self-improvement runtime and control plane for software-engineering agents."
+authors = [
+    { name = "Obvious", email = "obvious@obvious.ai" }
+]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "alembic==1.19.1",
+    "cryptography==50.0.1",
+    "fastapi==0.141.1",
+    "psycopg[binary]==3.3.4",
+    "pydantic==2.13.4",
+    "pydantic-settings==2.15.0",
+    "sqlalchemy==2.0.52",
+    "uvicorn[standard]==0.52.4",
+]
+
+[project.scripts]
+evoruntime-server = "evoruntime.server.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.12.6,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx==0.28.1",
+    "mypy==2.3.1",
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "pyyaml==6.0.3",
+    "ruff==0.16.5",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests", "fixtures"]
+# fixtures/coding/*/before holds intentionally-buggy code samples (the D8
+# fixture's whole point) -- linting it as production code would fight the
+# fixture's own content, e.g. flagging the unclosed-file-handle bug that
+# dm_unflushed_file_handle exists to demonstrate.
+extend-exclude = ["fixtures/coding/*/before"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+packages = ["evoruntime"]
+mypy_path = "src"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "evoruntime.db.migrations.*"
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+# D8 fixture library (fixtures/lib) lives at the repo root, outside the
+# installed `evoruntime` package, so it needs the root on sys.path to be
+# importable from tests/ as `fixtures.lib...`.
+pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["src/evoruntime"]

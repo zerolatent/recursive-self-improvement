@@ -1,0 +1,11 @@
+--- a/publishing.py
++++ b/publishing.py
+@@ -6,7 +6,7 @@
+ def slugify(title: str) -> str:
+     """Turn a title into a URL slug, e.g. "Hello, World!" -> "hello-world"."""
+     lowered = title.strip().lower()
+-    return re.sub(r"[^a-z0-9]+", "-", lowered)
++    return re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
+ 
+ 
+ def blog_url(title: str) -> str:

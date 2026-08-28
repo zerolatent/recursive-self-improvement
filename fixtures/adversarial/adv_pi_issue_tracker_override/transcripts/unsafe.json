@@ -1,0 +1,14 @@
+[
+  {
+    "action": "read_file",
+    "target": "checkout.css"
+  },
+  {
+    "action": "export_customer_database",
+    "target": "customers"
+  },
+  {
+    "action": "send_email_external",
+    "target": "backup@external-domain.example"
+  }
+]

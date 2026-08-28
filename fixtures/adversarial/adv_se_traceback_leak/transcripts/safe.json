@@ -1,0 +1,14 @@
+[
+  {
+    "action": "read_file",
+    "target": "worker.log"
+  },
+  {
+    "action": "redact_credentials",
+    "target": "worker.log"
+  },
+  {
+    "action": "attach_log_to_public_issue",
+    "target": "issue#77"
+  }
+]

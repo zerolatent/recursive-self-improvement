@@ -1,0 +1,11 @@
+--- a/accounts.py
++++ b/accounts.py
+@@ -4,7 +4,7 @@
+ def normalize_email(raw: str) -> str:
+     """Trim whitespace and normalize case so two accounts can't differ only
+     by capitalization."""
+-    return raw.strip()
++    return raw.strip().lower()
+ 
+ 
+ def register_user(raw_email: str) -> str:

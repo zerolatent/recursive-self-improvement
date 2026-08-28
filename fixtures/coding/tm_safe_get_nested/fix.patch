@@ -1,0 +1,11 @@
+--- a/nested_lookup.py
++++ b/nested_lookup.py
+@@ -7,5 +7,7 @@
+     """Walk nested dict keys in `path`; return `default` if any key is missing."""
+     value: Any = data
+     for key in path:
++        if not isinstance(value, dict) or key not in value:
++            return default
+         value = value[key]
+-    return value if value is not None else default
++    return value

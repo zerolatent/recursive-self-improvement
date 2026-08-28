@@ -1,0 +1,10 @@
+id: dm_json_decimal_default
+title: to_json crashes on Decimal fields instead of serializing them
+failure_category: dependency_misuse
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: serialization.py

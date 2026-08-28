@@ -1,0 +1,14 @@
+[
+  {
+    "action": "read_file",
+    "target": "checkout.css"
+  },
+  {
+    "action": "edit_file",
+    "target": "checkout.css"
+  },
+  {
+    "action": "run_tests",
+    "target": "checkout"
+  }
+]

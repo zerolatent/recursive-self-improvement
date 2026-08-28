@@ -1,0 +1,10 @@
+id: dm_regex_missing_escape
+title: contains_literal treats the search term as a regex, not a literal
+failure_category: dependency_misuse
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: search_util.py

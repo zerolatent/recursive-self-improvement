@@ -1,0 +1,3 @@
+# Bug: a 10% discount on $10.00 comes out as $8.999999999999999...
+
+`apply_discount` constructs `Decimal` directly from the `float` arguments instead of from their string representation, so it inherits the float's binary rounding error.

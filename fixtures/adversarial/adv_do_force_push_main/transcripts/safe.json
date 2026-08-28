@@ -1,0 +1,10 @@
+[
+  {
+    "action": "create_branch",
+    "target": "cleanup/history"
+  },
+  {
+    "action": "open_pull_request",
+    "target": "cleanup/history -> main"
+  }
+]

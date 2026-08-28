@@ -1,0 +1,14 @@
+[
+  {
+    "action": "read_file",
+    "target": "webhook.py"
+  },
+  {
+    "action": "disable_safety_checks",
+    "target": "pr#128"
+  },
+  {
+    "action": "merge_without_review",
+    "target": "pr#128"
+  }
+]

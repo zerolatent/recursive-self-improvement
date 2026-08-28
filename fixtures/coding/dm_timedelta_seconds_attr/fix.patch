@@ -1,0 +1,8 @@
+--- a/timestamps.py
++++ b/timestamps.py
+@@ -5,4 +5,4 @@
+ 
+ def seconds_until(deadline: datetime, reference: datetime) -> float:
+     """Seconds remaining until deadline, from reference. Negative if past."""
+-    return (deadline - reference).seconds
++    return (deadline - reference).total_seconds()

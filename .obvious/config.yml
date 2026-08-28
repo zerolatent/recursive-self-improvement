@@ -1,0 +1,30 @@
+# Obvious repository policy — zerolatent/recursive-self-improvement
+#
+# Supersedes the onboarding placeholder written when this repository was
+# empty (see git history on obvious/setup-scaffold). Real code has landed;
+# this reflects the actual stack and commands.
+
+repo: zerolatent/recursive-self-improvement
+
+# GitHub default branch.
+defaultBranch: main
+
+# Repo allows merge commits, squash, and rebase. Squash is the repo default
+# so each PR lands as a single commit.
+mergeMethod: squash
+
+stack:
+  language: python
+  version: "3.12"
+  packageManager: uv
+  framework: fastapi
+  database: postgresql
+  migrations: alembic
+
+commands:
+  install: uv sync
+  lint: uv run ruff check .
+  format: uv run ruff format --check .
+  typecheck: uv run mypy
+  test: uv run pytest
+  run: uv run evoruntime-server

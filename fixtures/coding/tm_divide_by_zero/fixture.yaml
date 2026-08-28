@@ -1,0 +1,10 @@
+id: tm_divide_by_zero
+title: safe_divide hides a division-by-zero bug behind a silent 0.0
+failure_category: test_misunderstanding
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: arithmetic.py

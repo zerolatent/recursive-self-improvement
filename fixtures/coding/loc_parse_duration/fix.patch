@@ -1,0 +1,11 @@
+--- a/scheduling.py
++++ b/scheduling.py
+@@ -7,6 +7,8 @@
+         return int(text[:-1])
+     if text.endswith("m"):
+         return int(text[:-1]) * 60
++    if text.endswith("h"):
++        return int(text[:-1]) * 3600
+     raise ValueError(f"unsupported duration unit: {text!r}")
+ 
+ 

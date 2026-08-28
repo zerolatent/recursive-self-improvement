@@ -20,16 +20,26 @@ from pydantic import AwareDatetime, Field, StringConstraints
 
 from evoruntime.core.schemas import EvoRuntimeBaseModel
 
-# sha256 hex digest, optionally prefixed with "sha256:" as the PRD's example
-# envelope uses for artifact/environment/payload digests.
-_Sha256Digest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
+# sha256 hex digest, prefixed with "sha256:" as the PRD's example envelope
+# uses for artifact/environment/payload digests.
+#
+# The patterns clients also need to validate against — a digest, a trace id,
+# a task id — are public constants rather than private aliases: the adapter
+# SDK checks the same shapes on the agent thread so a caller's typo surfaces
+# at the call site, and a second hand-copied regex would be free to drift
+# away from the envelope this one defines.
+SHA256_DIGEST_PATTERN = r"^sha256:[0-9a-f]{64}$"
+TRACE_ID_PATTERN = r"^trc_[A-Za-z0-9]+$"
+TASK_ID_PATTERN = r"^tsk_[A-Za-z0-9]+$"
+
+_Sha256Digest = Annotated[str, StringConstraints(pattern=SHA256_DIGEST_PATTERN)]
 
 _TenantId = Annotated[str, StringConstraints(pattern=r"^tnt_[A-Za-z0-9]+$")]
 _AgentId = Annotated[str, StringConstraints(pattern=r"^agt_[A-Za-z0-9]+$")]
 _ReleaseId = Annotated[str, StringConstraints(pattern=r"^rel_[A-Za-z0-9]+$")]
 _CampaignId = Annotated[str, StringConstraints(pattern=r"^cmp_[A-Za-z0-9]+$")]
-_TraceId = Annotated[str, StringConstraints(pattern=r"^trc_[A-Za-z0-9]+$")]
-_TaskId = Annotated[str, StringConstraints(pattern=r"^tsk_[A-Za-z0-9]+$")]
+_TraceId = Annotated[str, StringConstraints(pattern=TRACE_ID_PATTERN)]
+_TaskId = Annotated[str, StringConstraints(pattern=TASK_ID_PATTERN)]
 _EventId = Annotated[str, StringConstraints(pattern=r"^evt_[A-Za-z0-9]+$")]
 
 # Dotted event type, e.g. "tool.completed", "model.call", "artifact.loaded".

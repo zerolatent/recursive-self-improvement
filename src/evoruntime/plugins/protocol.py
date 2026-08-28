@@ -37,7 +37,7 @@ import sys
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol, runtime_checkable
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from evoruntime.core.schemas import EvoRuntimeBaseModel
 
@@ -126,13 +126,71 @@ class RemainingBudget(EvoRuntimeBaseModel):
     model_tokens_remaining: int = Field(ge=0)
 
 
-class Proposal(EvoRuntimeBaseModel):
-    """One candidate the strategy proposes."""
+class ProposalMember(EvoRuntimeBaseModel):
+    """One typed member of a (possibly composite) proposal (Phase 2, F4).
 
-    proposal_id: str
+    A composite proposal mutates several artifacts in one atomic candidate:
+    each member names the artifact class it edits, the adapter-specific
+    patch for it, and — for executable classes — the executables it
+    declares (the F2 admission surface). Order is significant: the
+    composite artifact digest is computed over the ordered member set
+    (see :mod:`evoruntime.plugins.composite`), so reordering members is a
+    different candidate, not a cosmetic change.
+    """
+
     artifact_type: str
     patch: dict[str, Any]
+    declared_executables: tuple[str, ...] = Field(default=())
+
+
+class Proposal(EvoRuntimeBaseModel):
+    """One candidate the strategy proposes.
+
+    A proposal carries either a single mutation (the Phase 1 shape:
+    ``artifact_type`` + ``patch``) or an ordered tuple of typed members
+    (the Phase 2 composite shape). A composite proposal must not also
+    carry a conflicting singular type: if both are present, the singular
+    ``artifact_type`` is the primary member's type and must agree with
+    ``members[0]``.
+    """
+
+    proposal_id: str
+    artifact_type: str = ""
+    patch: dict[str, Any] = Field(default_factory=dict)
+    members: tuple[ProposalMember, ...] = Field(default=())
     rationale: str = ""
+
+    @model_validator(mode="after")
+    def _validate_mutation_shape(self) -> Proposal:
+        if not self.members:
+            if not self.artifact_type:
+                raise ValueError(
+                    "a proposal must mutate something: declare members (composite) "
+                    "or artifact_type + patch (single-artifact)"
+                )
+            return self
+        if self.artifact_type and self.artifact_type != self.members[0].artifact_type:
+            raise ValueError(
+                f"proposal artifact_type {self.artifact_type!r} does not match the "
+                f"primary member {self.members[0].artifact_type!r} — the singular "
+                "field, when present, names the primary member"
+            )
+        return self
+
+    @property
+    def is_composite(self) -> bool:
+        """True when this proposal carries an explicit ordered member set."""
+        return bool(self.members)
+
+    def typed_members(self) -> tuple[ProposalMember, ...]:
+        """The proposal's members, normalizing the Phase 1 singular shape.
+
+        A single-artifact proposal is the one-member composite; every
+        downstream consumer (digests, masks, registry) sees one shape.
+        """
+        if self.members:
+            return self.members
+        return (ProposalMember(artifact_type=self.artifact_type, patch=dict(self.patch)),)
 
 
 class DevEvaluationResult(EvoRuntimeBaseModel):
@@ -157,10 +215,43 @@ class CheckpointRef(EvoRuntimeBaseModel):
 
 
 class CandidateBundle(EvoRuntimeBaseModel):
-    """A candidate handed to an adapter for validation/rendering."""
+    """A candidate handed to an adapter for validation/rendering.
+
+    Phase 2 (F4): a bundle may hold files of several artifact types. The
+    top-level ``artifact_type`` is the primary member's class; per-file
+    ``artifact_type`` entries (when present) name each file's class, and
+    ``artifact_types`` declares the ordered member classes (primary
+    first). The mutation-mask wrapper uses the per-file type to pick the
+    mask each file is checked against.
+    """
 
     artifact_type: str
     files: tuple[dict[str, Any], ...] = Field(default=())
+    artifact_types: tuple[str, ...] = Field(default=())
+
+    @model_validator(mode="after")
+    def _validate_types(self) -> CandidateBundle:
+        if self.artifact_types and self.artifact_types[0] != self.artifact_type:
+            raise ValueError(
+                f"bundle artifact_type {self.artifact_type!r} does not match the "
+                f"first declared type {self.artifact_types[0]!r} — the primary "
+                "type comes first"
+            )
+        return self
+
+    @property
+    def member_types(self) -> tuple[str, ...]:
+        """The bundle's member types: declared types when given, else the
+        per-file types in first-appearance order, else the primary type."""
+        if self.artifact_types:
+            return self.artifact_types
+        seen: list[str] = []
+        for entry in self.files:
+            if isinstance(entry, dict):
+                file_type = entry.get("artifact_type")
+                if isinstance(file_type, str) and file_type and file_type not in seen:
+                    seen.append(file_type)
+        return tuple(seen) if seen else (self.artifact_type,)
 
 
 class CanonicalBytes(EvoRuntimeBaseModel):

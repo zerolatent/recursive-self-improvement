@@ -37,14 +37,23 @@ from evoruntime.campaign.machine import (
     can_pause,
     is_terminal,
 )
-from evoruntime.campaign.masks import MaskEnforcingAdapter, MutationMask, mask_violations
+from evoruntime.campaign.masks import (
+    MaskEnforcingAdapter,
+    MutationMask,
+    mask_violations,
+    masks_from_spec,
+    member_mask_violations,
+)
 from evoruntime.campaign.spec import (
+    SUPPORTED_SPEC_VERSION,
+    V1_MIGRATION_WINDOW_END,
     CampaignBudgets,
     CampaignSpec,
     DatasetBindings,
     EvaluatorBinding,
     IncumbentBinding,
     MutableArtifact,
+    MutableArtifactSet,
     PinnedCampaignSpec,
     PromotionPolicyRef,
     StatisticsPlan,
@@ -54,6 +63,8 @@ from evoruntime.campaign.spec import (
 )
 
 __all__ = [
+    "SUPPORTED_SPEC_VERSION",
+    "V1_MIGRATION_WINDOW_END",
     "CampaignBudget",
     "CampaignBudgetExceededError",
     "CampaignBudgetMeter",
@@ -73,6 +84,7 @@ __all__ = [
     "InvalidTransitionError",
     "MaskEnforcingAdapter",
     "MutableArtifact",
+    "MutableArtifactSet",
     "MutationMask",
     "MutationMaskViolationError",
     "PinnedCampaignSpec",
@@ -87,5 +99,7 @@ __all__ = [
     "can_pause",
     "is_terminal",
     "mask_violations",
+    "masks_from_spec",
+    "member_mask_violations",
     "pin_and_sign",
 ]

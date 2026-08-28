@@ -16,7 +16,13 @@ import yaml
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from evoruntime.campaign.errors import InvalidCampaignSpecError
-from evoruntime.campaign.spec import SUPPORTED_SPEC_VERSION, CampaignSpec, pin_and_sign
+from evoruntime.campaign.spec import (
+    SUPPORTED_SPEC_VERSION,
+    CampaignSpec,
+    MutableArtifact,
+    MutableArtifactSet,
+    pin_and_sign,
+)
 from tests.campaign.conftest import make_spec, make_spec_mapping
 
 
@@ -49,13 +55,23 @@ class TestSpecValidation:
         with pytest.raises(InvalidCampaignSpecError, match="'budgets'"):
             CampaignSpec.from_mapping(raw)  # type: ignore[arg-type]
 
-    def test_artifact_type_must_match_the_incumbent(self) -> None:
+    def test_mutable_set_must_contain_the_incumbent_class_exactly_once(self) -> None:
         spec = make_spec()
-        mismatched = replace(spec.mutable_artifact, artifact_type="skill_package")
-        # dataclasses.replace re-runs __post_init__, which is where the
-        # consistency check lives — the mismatch is a construction error.
-        with pytest.raises(InvalidCampaignSpecError, match="does not match"):
-            replace(spec, mutable_artifact=mismatched)
+        # No member of the incumbent's class: nothing to optimize.
+        foreign = MutableArtifact(artifact_type="skill_package", paths=("skills/x.md",))
+        with pytest.raises(InvalidCampaignSpecError, match="exactly one artifact of the"):
+            replace(spec, mutable_artifacts=MutableArtifactSet(artifacts=(foreign,)))
+        # Two members of the incumbent's class: the primary is ambiguous —
+        # caught one layer down, as a duplicate class in the set.
+        with pytest.raises(InvalidCampaignSpecError, match="duplicate artifact_type"):
+            MutableArtifactSet(
+                artifacts=(
+                    spec.mutable_artifact,
+                    MutableArtifact(
+                        artifact_type=spec.incumbent.artifact_type, paths=("prompts/other.md",)
+                    ),
+                )
+            )
 
     def test_each_of_the_four_arms_is_required_exactly_once(self) -> None:
         kinds = [arm.kind.value for arm in make_spec().arms]

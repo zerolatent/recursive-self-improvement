@@ -164,9 +164,9 @@ class TestScriptedAgent:
         """A one-shot control is not billed for scaffolding it never ran."""
         meter = _meter()
 
-        ScriptedAgent(
-            {"tsk_001": (ScriptedStep(True, cost=AttemptCost(tool_calls=3)),)}
-        ).run(make_request(allow_tools=False), meter)
+        ScriptedAgent({"tsk_001": (ScriptedStep(True, cost=AttemptCost(tool_calls=3)),)}).run(
+            make_request(allow_tools=False), meter
+        )
 
         assert meter.usage.tool_calls == 0
 

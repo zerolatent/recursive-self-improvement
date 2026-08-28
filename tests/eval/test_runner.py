@@ -29,9 +29,7 @@ from evoruntime.eval import (
 )
 from tests.eval.conftest import frozen_clock, scripted_outcomes, three_arm_experiment
 
-HEAVY_COST = AttemptCost(
-    input_tokens=50_000, output_tokens=5_000, tool_calls=10, wall_clock_s=60.0
-)
+HEAVY_COST = AttemptCost(input_tokens=50_000, output_tokens=5_000, tool_calls=10, wall_clock_s=60.0)
 """One attempt of this costs a third of the task-budget-v1 token envelope."""
 
 
@@ -181,9 +179,7 @@ class TestRunTask:
     def test_one_shot_control_is_not_charged_for_a_tool_loop(self) -> None:
         """The control has no tools, so its recorded cost must show none."""
         task = EvalTask(id="tsk_001", prompt="fix it")
-        backend = ScriptedAgent(
-            {"tsk_001": (ScriptedStep(True, cost=AttemptCost(tool_calls=4)),)}
-        )
+        backend = ScriptedAgent({"tsk_001": (ScriptedStep(True, cost=AttemptCost(tool_calls=4)),)})
 
         run = run_task(
             arm=Arm(id="one-shot", kind=ArmKind.ONE_SHOT_CONTROL),
@@ -404,9 +400,7 @@ class TestRunExperiment:
                 experiment, backends=backends, task_source=task_source, clock_factory=frozen_clock
             )
 
-    def test_sealed_partition_is_refused_at_construction(
-        self, tasks: tuple[EvalTask, ...]
-    ) -> None:
+    def test_sealed_partition_is_refused_at_construction(self, tasks: tuple[EvalTask, ...]) -> None:
         """The first refusal is at experiment construction — a holdout arm is
         never even preregistered. The task source refuses again at load time
         (tests/eval/test_sources.py): the boundary holds at both layers."""

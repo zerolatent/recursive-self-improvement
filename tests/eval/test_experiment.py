@@ -165,9 +165,7 @@ def test_experiment_defaults_match_the_prd_shape() -> None:
 def test_arms_are_frozen_into_a_tuple() -> None:
     """A mutable arm list handed in by a caller could change mid-campaign."""
     arms = [Arm(id="incumbent", kind=ArmKind.INCUMBENT)]
-    exp = Experiment(
-        name="freeze", dataset="ds", task_budget_profile="task-budget-v1", arms=arms
-    )
+    exp = Experiment(name="freeze", dataset="ds", task_budget_profile="task-budget-v1", arms=arms)
     arms.append(Arm(id="sneaky", kind=ArmKind.ONE_SHOT_CONTROL))
 
     assert isinstance(exp.arms, tuple)

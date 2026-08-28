@@ -180,9 +180,7 @@ def test_budget_is_frozen_so_no_arm_can_widen_its_own_ceiling() -> None:
 
 def test_limit_covers_every_dimension() -> None:
     """Every dimension the meter enforces has a ceiling to read."""
-    assert {
-        dimension: SMALL_BUDGET.limit(dimension) for dimension in BudgetDimension
-    } == {
+    assert {dimension: SMALL_BUDGET.limit(dimension) for dimension in BudgetDimension} == {
         BudgetDimension.INPUT_TOKENS: 1_000.0,
         BudgetDimension.OUTPUT_TOKENS: 500.0,
         BudgetDimension.TOOL_CALLS: 4.0,

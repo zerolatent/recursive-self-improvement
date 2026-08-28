@@ -122,9 +122,7 @@ class TestKnownEffectReproduction:
         tasks, so every resample averages zero. An interval that wandered
         off zero here would mean the resampling had a bug.
         """
-        baseline, candidate = synthetic_paired_scores(
-            120, baseline_p=0.5, candidate_p=0.5, seed=99
-        )
+        baseline, candidate = synthetic_paired_scores(120, baseline_p=0.5, candidate_p=0.5, seed=99)
 
         result = paired_bootstrap(baseline, candidate, seed=3)
 
@@ -177,9 +175,7 @@ class TestMultiplicity:
 
     def test_bonferroni_splits_the_family_alpha(self) -> None:
         """Two candidate arms against one incumbent: each interval gets alpha/2."""
-        assert per_comparison_alpha(0.05, 2, MultiplicityMethod.BONFERRONI) == pytest.approx(
-            0.025
-        )
+        assert per_comparison_alpha(0.05, 2, MultiplicityMethod.BONFERRONI) == pytest.approx(0.025)
 
     def test_none_leaves_the_alpha_alone(self) -> None:
         """Opting out is explicit and named, never the default."""
@@ -251,9 +247,7 @@ class TestBootstrapContract:
 
     def test_result_is_reproducible_from_its_recorded_seed(self) -> None:
         """A published interval a reviewer cannot recompute is an assertion, not evidence."""
-        baseline, candidate = synthetic_paired_scores(
-            80, baseline_p=0.3, candidate_p=0.5, seed=1
-        )
+        baseline, candidate = synthetic_paired_scores(80, baseline_p=0.3, candidate_p=0.5, seed=1)
 
         first = paired_bootstrap(baseline, candidate, seed=77)
         second = paired_bootstrap(baseline, candidate, seed=first.seed)
@@ -263,9 +257,7 @@ class TestBootstrapContract:
 
     def test_observed_delta_does_not_depend_on_the_resampling_seed(self) -> None:
         """The point estimate is data; only the interval is resampled."""
-        baseline, candidate = synthetic_paired_scores(
-            80, baseline_p=0.3, candidate_p=0.5, seed=1
-        )
+        baseline, candidate = synthetic_paired_scores(80, baseline_p=0.3, candidate_p=0.5, seed=1)
 
         assert paired_bootstrap(baseline, candidate, seed=1).observed_delta == pytest.approx(
             paired_bootstrap(baseline, candidate, seed=2).observed_delta
@@ -291,17 +283,13 @@ class TestBootstrapContract:
         baseline = [0.0] * 40
         candidate = [1.0] * 40
 
-        result = paired_bootstrap(
-            baseline, candidate, iterations=MIN_BOOTSTRAP_ITERATIONS, seed=0
-        )
+        result = paired_bootstrap(baseline, candidate, iterations=MIN_BOOTSTRAP_ITERATIONS, seed=0)
 
         assert result.p_value == pytest.approx(1.0 / MIN_BOOTSTRAP_ITERATIONS)
 
     def test_alpha_is_recorded_on_the_result(self) -> None:
         """The interval carries the alpha it was built at, for the report to cite."""
-        baseline, candidate = synthetic_paired_scores(
-            40, baseline_p=0.4, candidate_p=0.5, seed=3
-        )
+        baseline, candidate = synthetic_paired_scores(40, baseline_p=0.4, candidate_p=0.5, seed=3)
 
         result = paired_bootstrap(baseline, candidate, alpha=0.025, seed=0)
 

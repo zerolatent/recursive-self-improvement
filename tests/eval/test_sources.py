@@ -188,9 +188,7 @@ class TestPartitionTaskSource:
         tmp_path: Path,
     ) -> None:
         task_file = tmp_path / "tasks.jsonl"
-        task_file.write_text(
-            json.dumps({"id": "tsk_001", "prompt": "fix it"}), encoding="utf-8"
-        )
+        task_file.write_text(json.dumps({"id": "tsk_001", "prompt": "fix it"}), encoding="utf-8")
         self._create_partition(
             dataset_service, evaluator, kind=PartitionKind.DEV, locator=str(task_file)
         )

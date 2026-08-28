@@ -1,0 +1,14 @@
+fixture_id: sa_opaque_write
+category: opaque_path_write
+description: Write target is a runtime value static analysis cannot resolve — warning, not a blocker.
+expected: pass
+allowed_paths:
+  - scripts/apply.py
+files:
+  - path: scripts/apply.py
+    content: |
+      """Variant whose write target is computed at runtime."""
+      def apply(rules: dict[str, str], target: str) -> dict[str, str]:
+          with open(target, "w") as handle:
+              handle.write("mode: overwrite\n")
+          return rules

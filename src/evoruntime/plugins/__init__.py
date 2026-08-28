@@ -6,6 +6,7 @@ Public surface:
 - :mod:`.manifest` — the §10.4 manifest schema and effective-grant intersection.
 - :mod:`.admission` — the pure-function malformed-output gate (FR-018).
 - :mod:`.packaging` — signed OCI packaging with SBOM.
+- :mod:`.static_analysis` — the F3 static-analysis execution gate (Phase 2).
 - :mod:`.privileged` — the FR-022 privileged admission path.
 """
 
@@ -44,16 +45,29 @@ from evoruntime.plugins.protocol import (
     StrategyPluginClient,
     clean_plugin_env,
 )
+from evoruntime.plugins.static_analysis import (
+    AnalysisViolation,
+    AnalysisViolationCode,
+    ExecutionGate,
+    Severity,
+    StaticAnalysisBlockedError,
+    StaticAnalysisGate,
+    StaticAnalysisReport,
+    analyze_files,
+)
 
 __all__ = [
     "AdapterPluginClient",
     "AdmissionDecision",
     "AdmissionViolation",
+    "AnalysisViolation",
+    "AnalysisViolationCode",
     "ArchiveInfo",
     "BudgetExceededError",
     "CheckpointRef",
     "CompatibilityRange",
     "EffectiveGrant",
+    "ExecutionGate",
     "InMemoryCheckpointStore",
     "NetworkMode",
     "OutputEntry",
@@ -68,9 +82,14 @@ __all__ = [
     "Reproducibility",
     "ResourceLimits",
     "SearchState",
+    "Severity",
     "StrategyPluginClient",
+    "StaticAnalysisBlockedError",
+    "StaticAnalysisGate",
+    "StaticAnalysisReport",
     "ViolationCode",
     "admit_output",
+    "analyze_files",
     "check_compatibility",
     "clean_plugin_env",
     "effective_grant",

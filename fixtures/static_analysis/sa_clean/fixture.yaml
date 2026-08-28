@@ -1,0 +1,21 @@
+fixture_id: sa_clean
+category: clean
+description: Benign skill-script candidate — pure computation, writes only inside the mask.
+expected: pass
+allowed_paths:
+  - prompts/notes.md
+  - scripts/apply.py
+files:
+  - path: scripts/apply.py
+    content: |
+      """Tighten the system prompt's tool-usage guidance."""
+      REVISIONS = {"tool_use": "Prefer file tools over shell."}
+
+      def apply(rules: dict[str, str]) -> dict[str, str]:
+          merged = dict(rules)
+          merged.update(REVISIONS)
+          return merged
+  - path: prompts/notes.md
+    content: |
+      # Notes
+      Plain markdown is mask-checked but never source-scanned.

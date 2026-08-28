@@ -20,6 +20,15 @@ class EvalError(Exception):
     """Base class for evaluation-harness failures."""
 
 
+class CascadeDefinitionError(EvalError):
+    """A cascade was declared in a way the runner cannot execute.
+
+    Raised before any stage runs: an empty stage set or two stages sharing
+    a stage number has no defensible execution order, and running one
+    anyway would make the short-circuit semantics depend on sort stability.
+    """
+
+
 class ExperimentDefinitionError(EvalError):
     """An experiment or arm was declared in a way the harness cannot run.
 
@@ -119,6 +128,7 @@ class StatisticsError(EvalError):
 
 __all__ = [
     "BackendCredentialError",
+    "CascadeDefinitionError",
     "BackendRequestError",
     "BudgetExceededError",
     "EvalError",

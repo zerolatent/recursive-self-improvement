@@ -124,6 +124,10 @@ class RemainingBudget(EvoRuntimeBaseModel):
     proposals_remaining: int = Field(ge=0)
     wall_clock_minutes_remaining: float = Field(ge=0)
     model_tokens_remaining: int = Field(ge=0)
+    # Phase 2 F6: headroom for F1-isolated executable runs. Defaults to a
+    # finite sentinel so payloads written before this field existed still
+    # parse; the campaign meter always populates it explicitly.
+    sandbox_executions_remaining: int = Field(default=0, ge=0)
 
 
 class ProposalMember(EvoRuntimeBaseModel):

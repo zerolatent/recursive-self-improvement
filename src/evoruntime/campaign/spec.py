@@ -43,6 +43,7 @@ from typing import Any, Protocol
 from evoruntime.campaign.errors import InvalidCampaignSpecError
 from evoruntime.datasets.partitions import HOLDOUT_HANDLE_SCHEME
 from evoruntime.eval.budgets import resolve_budget_profile
+from evoruntime.eval.cascade import EvaluatorCostClass
 from evoruntime.eval.errors import UnknownBudgetProfileError
 from evoruntime.eval.experiment import Arm, ArmKind
 from evoruntime.eval.statistics import MIN_BOOTSTRAP_ITERATIONS, MultiplicityMethod
@@ -244,21 +245,64 @@ class DatasetBindings:
         }
 
 
+DEFAULT_MAX_SANDBOX_EXECUTIONS = 240
+"""Default campaign-level ceiling on sandbox executions per campaign.
+
+Executable candidates (F1) spend real isolation resources per run —
+process spawn, staging, teardown under enforced limits — so the campaign
+budget carries its own dimension for them rather than overloading
+`max_model_tokens`. The default is generous but finite: a campaign that
+runs out of sandbox executions has a search-shape problem worth surfacing,
+not silently absorbing.
+"""
+
+
 @dataclass(frozen=True, slots=True)
 class EvaluatorBinding:
-    """One evaluator the campaign's arms are scored by, pinned by image digest."""
+    """One evaluator the campaign's arms are scored by, pinned by image digest.
+
+    Cascade fields (Phase 2 F6): `stage` orders the cascade (0 is the
+    cheapest tier, stages run ascending), `cost_class` describes the
+    evaluator's expense for attribution and reporting, and `short_circuit`
+    (default true) stops the cascade when this stage fails — expensive
+    stages never run after a cheap-stage failure. The defaults make a
+    binding with no cascade fields the cheapest, short-circuiting stage,
+    which is what a single-evaluator campaign has always been.
+    """
 
     name: str
     pinned_image: str
+    stage: int = 0
+    cost_class: EvaluatorCostClass = EvaluatorCostClass.CHEAP
+    short_circuit: bool = True
 
     def __post_init__(self) -> None:
         if not self.name:
             raise InvalidCampaignSpecError("evaluator name must be non-empty")
         _require_pinned_image(self.pinned_image, f"evaluator {self.name!r} pinned_image")
+        if self.stage < 0:
+            raise InvalidCampaignSpecError(
+                f"evaluator {self.name!r} stage must be >= 0 (0 is the cheapest tier), "
+                f"got {self.stage}"
+            )
+        if not isinstance(self.cost_class, EvaluatorCostClass):
+            try:
+                object.__setattr__(self, "cost_class", EvaluatorCostClass(self.cost_class))
+            except ValueError as exc:
+                raise InvalidCampaignSpecError(
+                    f"evaluator {self.name!r} cost_class {self.cost_class!r} is not one of: "
+                    f"{', '.join(c.value for c in EvaluatorCostClass)}"
+                ) from exc
 
     def to_canonical_dict(self) -> dict[str, Any]:
         """Canonical JSON form of this binding."""
-        return {"name": self.name, "pinned_image": self.pinned_image}
+        return {
+            "name": self.name,
+            "pinned_image": self.pinned_image,
+            "stage": self.stage,
+            "cost_class": self.cost_class.value,
+            "short_circuit": self.short_circuit,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,6 +321,7 @@ class CampaignBudgets:
     max_proposals: int
     max_model_tokens: int
     max_wall_clock_minutes: float
+    max_sandbox_executions: int = DEFAULT_MAX_SANDBOX_EXECUTIONS
 
     def __post_init__(self) -> None:
         if self.max_proposals < 1:
@@ -290,6 +335,10 @@ class CampaignBudgets:
         if self.max_wall_clock_minutes <= 0:
             raise InvalidCampaignSpecError(
                 f"max_wall_clock_minutes must be positive, got {self.max_wall_clock_minutes!r}"
+            )
+        if self.max_sandbox_executions < 1:
+            raise InvalidCampaignSpecError(
+                f"max_sandbox_executions must be at least 1, got {self.max_sandbox_executions}"
             )
         # Resolving here turns an unknown profile name into a construction
         # error instead of a run-time one (same discipline as Experiment).
@@ -310,6 +359,7 @@ class CampaignBudgets:
             "max_proposals": self.max_proposals,
             "max_model_tokens": self.max_model_tokens,
             "max_wall_clock_minutes": self.max_wall_clock_minutes,
+            "max_sandbox_executions": self.max_sandbox_executions,
         }
 
 
@@ -621,6 +671,16 @@ class CampaignSpec:
                         pinned_image=_require_str(
                             evaluator["pinned_image"], "evaluator pinned_image"
                         ),
+                        stage=_require_int(evaluator.get("stage", 0), "evaluator stage"),
+                        cost_class=EvaluatorCostClass(
+                            _require_str(
+                                evaluator.get("cost_class", EvaluatorCostClass.CHEAP.value),
+                                "evaluator cost_class",
+                            )
+                        ),
+                        short_circuit=_require_bool(
+                            evaluator.get("short_circuit", True), "evaluator short_circuit"
+                        ),
                     )
                     for evaluator in raw["evaluators"]
                 ),
@@ -634,6 +694,12 @@ class CampaignSpec:
                     ),
                     max_wall_clock_minutes=_require_float(
                         raw["budgets"]["max_wall_clock_minutes"], "max_wall_clock_minutes"
+                    ),
+                    max_sandbox_executions=_require_int(
+                        raw["budgets"].get(
+                            "max_sandbox_executions", DEFAULT_MAX_SANDBOX_EXECUTIONS
+                        ),
+                        "max_sandbox_executions",
                     ),
                 ),
                 promotion_policy=PromotionPolicyRef(
@@ -774,6 +840,12 @@ def _require_float(value: Any, what: str) -> float:
     return float(value)
 
 
+def _require_bool(value: Any, what: str) -> bool:
+    if not isinstance(value, bool):
+        raise InvalidCampaignSpecError(f"{what} must be a boolean, got {value!r}")
+    return value
+
+
 def _require_str(value: Any, what: str) -> str:
     if not isinstance(value, str):
         raise InvalidCampaignSpecError(f"{what} must be a string, got {value!r}")
@@ -781,6 +853,7 @@ def _require_str(value: Any, what: str) -> str:
 
 
 __all__ = [
+    "DEFAULT_MAX_SANDBOX_EXECUTIONS",
     "SUPPORTED_SPEC_VERSION",
     "V1_MIGRATION_WINDOW_END",
     "CampaignBudgets",

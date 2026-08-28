@@ -24,6 +24,7 @@ def make_budget(**overrides: Any) -> CampaignBudget:
         "max_proposals": 3,
         "max_model_tokens": 1000,
         "max_wall_clock_minutes": 1.0,
+        "max_sandbox_executions": 10,
     }
     values.update(overrides)
     return CampaignBudget(**values)
@@ -100,6 +101,50 @@ class TestPluginVisibility:
         assert not meter.exhausted()
         meter.charge_proposals(3)
         assert meter.exhausted()
+
+
+class TestSandboxExecutionDimension:
+    """F6: the campaign-level ceiling on F1-isolated executable runs."""
+
+    def test_charge_within_the_ceiling_records(self) -> None:
+        meter = CampaignBudgetMeter(make_budget(), clock=FrozenClock())
+        meter.charge_sandbox_executions(4)
+        assert meter.sandbox_executions_charged == 4
+        assert not meter.exhausted()
+
+    def test_charge_crossing_the_ceiling_raises_and_records_nothing(self) -> None:
+        meter = CampaignBudgetMeter(make_budget(), clock=FrozenClock())
+        with pytest.raises(CampaignBudgetExceededError) as excinfo:
+            meter.charge_sandbox_executions(11)
+        assert excinfo.value.dimension == "sandbox_executions"
+        assert meter.sandbox_executions_charged == 0
+
+    def test_exact_ceiling_is_allowed_but_nothing_more(self) -> None:
+        meter = CampaignBudgetMeter(make_budget(), clock=FrozenClock())
+        meter.charge_sandbox_executions(10)
+        assert meter.exhausted()
+        assert meter.remaining().sandbox_executions_remaining == 0
+
+    def test_can_charge_check_does_not_raise(self) -> None:
+        meter = CampaignBudgetMeter(make_budget(), clock=FrozenClock())
+        assert meter.can_charge_sandbox_executions(10)
+        assert not meter.can_charge_sandbox_executions(11)
+
+    def test_negative_charge_is_refused(self) -> None:
+        meter = CampaignBudgetMeter(make_budget(), clock=FrozenClock())
+        with pytest.raises(ValueError, match="non-negative"):
+            meter.charge_sandbox_executions(-1)
+
+    def test_sandbox_ceiling_resolves_from_the_spec(self) -> None:
+        budgets = CampaignBudgets(
+            task_budget_profile="task-budget-v1",
+            max_proposals=7,
+            max_model_tokens=50_000,
+            max_wall_clock_minutes=12.5,
+            max_sandbox_executions=64,
+        )
+        budget = CampaignBudget.from_spec(budgets)
+        assert budget.max_sandbox_executions == 64
 
 
 class TestSpecResolution:

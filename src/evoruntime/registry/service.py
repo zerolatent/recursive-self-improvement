@@ -314,6 +314,22 @@ class RegistryService:
         self._session.flush()
         return event
 
+    def list_status_events(
+        self, *, tenant_id: str, artifact_digest: str | None = None
+    ) -> tuple[ArtifactStatusEvent, ...]:
+        """Read the append-only status-event log, oldest first.
+
+        Scoped to one artifact when ``artifact_digest`` is given, or the
+        whole tenant when it is not (the selection plane reads the tenant
+        log to project freeze state). Read-only: corrections are new
+        events, never edits to old ones.
+        """
+        stmt = select(ArtifactStatusEvent).where(ArtifactStatusEvent.tenant_id == tenant_id)
+        if artifact_digest is not None:
+            stmt = stmt.where(ArtifactStatusEvent.artifact_digest == artifact_digest)
+        rows = self._session.execute(stmt.order_by(ArtifactStatusEvent.id)).scalars().all()
+        return tuple(rows)
+
     def current_status(self, *, tenant_id: str, artifact_digest: str) -> str | None:
         """The artifact's current status, read from the projection view.
 

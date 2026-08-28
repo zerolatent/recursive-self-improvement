@@ -1,0 +1,9 @@
+fixture_id: adm_zero_width_path
+category: confusable_path
+description: Protected path 'tests' with an invisible zero-width joiner inserted.
+expected: reject
+expected_violation: confusable_path
+entries:
+  - path: "tests\u200b/hidden.py"
+    kind: file
+    size_bytes: 128

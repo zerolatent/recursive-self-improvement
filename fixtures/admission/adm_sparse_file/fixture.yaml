@@ -1,0 +1,10 @@
+fixture_id: adm_sparse_file
+category: sparse_file
+description: Sparse file with an enormous logical size; sparse outputs are rejected outright.
+expected: reject
+expected_violation: sparse_file
+entries:
+  - path: prompt_bundle/sparse.md
+    kind: file
+    size_bytes: 8589934592
+    sparse: true

@@ -1,0 +1,12 @@
+fixture_id: adm_archive_bomb
+category: archive_bomb
+description: 40 KB zip claiming 4 GB uncompressed - ratio far above the cap.
+expected: reject
+expected_violation: archive_bomb
+entries:
+  - path: bundle.zip
+    kind: file
+    size_bytes: 40960
+    archive:
+      uncompressed_total_bytes: 4294967296
+      entry_count: 1

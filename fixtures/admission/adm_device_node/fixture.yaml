@@ -1,0 +1,8 @@
+fixture_id: adm_device_node
+category: device_node
+description: Candidate declares a device node entry; device nodes are never admitted.
+expected: reject
+expected_violation: device_node
+entries:
+  - path: zero
+    kind: device

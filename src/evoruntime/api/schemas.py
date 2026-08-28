@@ -154,3 +154,113 @@ class RollbackStatusView(EvoRuntimeBaseModel):
     status: str | None
     prior_release_digest: str | None
     rolled_back_to: str | None = None
+
+
+class ApprovalRequestView(EvoRuntimeBaseModel):
+    """A review-board request for a tier-3/4 promotion or privileged
+    plugin admission (F10)."""
+
+    request_id: str
+    kind: str
+    campaign_id: str | None = None
+    proposal_id: str | None = None
+    plugin_id: str | None = None
+    content_digest: str | None = None
+    privileged_role: str | None = None
+    tier: int
+    justification: str
+    requested_by: str
+    status: str
+    created_at: datetime
+
+
+class ApprovalDecisionView(EvoRuntimeBaseModel):
+    """One verified approver's decision on a review-board request."""
+
+    decision_id: str
+    request_id: str
+    decision: str
+    approver: str
+    approver_role: str
+    note: str
+    created_at: datetime
+
+
+class ApprovalRequestDetail(ApprovalRequestView):
+    """A review-board request with its full decision history."""
+
+    decisions: tuple[ApprovalDecisionView, ...] = ()
+
+
+class AdmissionRecordView(EvoRuntimeBaseModel):
+    """A signed admission record, surfaced read-only (F10).
+
+    ``signature_b64``/``signer_public_key_b64`` carry the Ed25519
+    detached signature over the record body — for privileged admissions
+    these are the FR-022 record's own signature fields.
+    """
+
+    record_id: str
+    request_id: str
+    kind: str
+    decision: str
+    plugin_id: str | None = None
+    content_digest: str | None = None
+    privileged_role: str | None = None
+    proposal_digest: str | None = None
+    tier: int | None = None
+    requested_by: str
+    request_digest: str | None = None
+    approvals: list[dict[str, Any]] = []
+    signature_b64: str
+    signer_public_key_b64: str
+    created_at: datetime
+
+
+class StaticAnalysisReportView(EvoRuntimeBaseModel):
+    """A signed static-analysis verdict (F3 record type, read surface).
+
+    ``signature_b64``/``signer_public_key_b64`` carry the Ed25519
+    detached signature over the verdict's canonical bytes, so a caller
+    can verify what the gate saw without trusting the JSON.
+    """
+
+    report_id: str
+    campaign_id: str | None = None
+    candidate_digest: str
+    artifact_type: str
+    outcome: str
+    violations: list[dict[str, Any]] = []
+    verdict_digest: str
+    signature_b64: str
+    signer_public_key_b64: str
+    created_at: datetime
+
+
+class CompensationPlanView(EvoRuntimeBaseModel):
+    """A signed compensation plan (F5 record type, read surface)."""
+
+    plan_id: str
+    campaign_id: str | None = None
+    manifest_digest: str | None = None
+    actions: list[dict[str, Any]] = []
+    plan_digest: str
+    signature_b64: str
+    signer_public_key_b64: str
+    created_at: datetime
+
+
+class AnalysisReportView(EvoRuntimeBaseModel):
+    """A signed static-analysis verdict over one candidate (F3 record
+    type, read surface)."""
+
+    report_id: str
+    campaign_id: str | None = None
+    candidate_digest: str
+    artifact_type: str
+    outcome: str
+    violations: list[dict[str, Any]] = []
+    verdict_digest: str
+    signature_b64: str
+    signer_public_key_b64: str
+    created_at: datetime

@@ -34,8 +34,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from evoruntime.api.approvals import dict_rows
 from evoruntime.api.errors import (
     AdapterNotConfiguredError,
+    AnalysisReportNotFoundError,
     CampaignApiError,
     CampaignNotFoundError,
     DiffUnavailableError,
@@ -43,6 +45,7 @@ from evoruntime.api.errors import (
     InvalidCampaignTransitionError,
     InvalidSpecError,
     ProposalNotFoundError,
+    RegistrationRefusedError,
     ReleaseNotFoundError,
     ReleaseStateError,
 )
@@ -59,14 +62,17 @@ from evoruntime.api.schemas import (
     ParetoReport,
     ReleaseView,
     RollbackStatusView,
+    StaticAnalysisReportView,
     TransitionView,
 )
 from evoruntime.campaign.errors import InvalidTransitionError, SpecTamperedError
 from evoruntime.campaign.machine import CampaignOrchestrator, CampaignPhase, CampaignTransition
+from evoruntime.campaign.masks import MutationMask
 from evoruntime.campaign.spec import CampaignSpec, PinnedCampaignSpec, pin_and_sign
 from evoruntime.core.ids import new_id
 from evoruntime.core.principal import Principal
 from evoruntime.db.base import session_scope
+from evoruntime.db.models.analysis import AnalysisReport
 from evoruntime.db.models.campaign import (
     AgentRegistration,
     CampaignRecord,
@@ -80,6 +86,9 @@ from evoruntime.db.models.registry import (
     ProposalRecord,
     ReleaseManifest,
 )
+from evoruntime.plugins import StaticAnalysisReport, admit_output, analyze_files
+from evoruntime.plugins.admission import OutputEntry
+from evoruntime.plugins.manifest import EXECUTABLE_ARTIFACT_TYPES
 from evoruntime.plugins.protocol import (
     AdapterPluginClient,
     CanonicalBytes,
@@ -87,9 +96,10 @@ from evoruntime.plugins.protocol import (
     StdioJsonRpcTransport,
     clean_plugin_env,
 )
+from evoruntime.registry import canonical
 from evoruntime.registry.service import RegistryService
 from evoruntime.security.identities import WorkloadIdentity, WorkloadRole
-from evoruntime.security.signing import DetachedSignature
+from evoruntime.security.signing import DetachedSignature, sign
 
 #: Metric keys the Pareto view reports as *costs* rather than gains or
 #: regressions. Everything else is compared against the parent and split
@@ -106,6 +116,92 @@ APPROVAL_DECISIONS = ("nominate", "reject", "quarantine", "revoke")
 #: Activation states a release may be created in. Promotion from canary
 #: is the only route to `active` through the API.
 CREATE_RELEASE_STATUSES = ("canary", "active")
+
+#: Default file path each executable artifact class's canonical bytes are
+#: analyzed under when the artifact does not declare its own file bundle.
+_EXECUTABLE_DEFAULT_PATHS = {
+    "workflow_graph": "candidate/workflow.json",
+    "tool_spec": "candidate/tool.json",
+    "skill_script": "candidate/main.py",
+    "algorithm": "candidate/main.py",
+    "harness_patch": "candidate/patch.json",
+}
+
+
+def candidate_file_entries(artifact_type: str, canonical_bytes: bytes) -> list[dict[str, Any]]:
+    """The file entries an executable candidate's canonical bytes declare.
+
+    Executable artifacts may declare their payload as a JSON bundle
+    ``{"files": [{"path": ..., "content": ...}]}``; anything else is
+    analyzed as a single file under the class's default path. Pure.
+    """
+    text = canonical_bytes.decode("utf-8", errors="replace")
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict) and isinstance(parsed.get("files"), list):
+        return [entry for entry in parsed["files"] if isinstance(entry, dict)]
+    return [
+        {
+            "path": _EXECUTABLE_DEFAULT_PATHS.get(artifact_type, "candidate/artifact.bin"),
+            "content": text,
+        }
+    ]
+
+
+def gate_executable_candidate(
+    artifact_type: str, canonical_bytes: bytes, *, candidate_digest: str
+) -> StaticAnalysisReport:
+    """Run the pre-registration gates over an executable candidate (F10).
+
+    Two gates, in order, both BEFORE anything is registered:
+
+    - **FR-018 output admission** over the bundle's entries — path shape,
+      size caps, confusable paths. The metadata plane; no content parsing.
+    - **F3 static analysis** over the file payloads — the source-safety
+      plane (network imports, subprocess spawns, dynamic exec,
+      unparseable source). The mutation-mask plane is the campaign's
+      concern (FR-006); at registration the artifact's own declared
+      paths are allowed, so a self-contained candidate is judged on what
+      its code does, not on where it sits.
+
+    Raises:
+        RegistrationRefusedError: with the refusing gate's violation
+            payloads — a refusal without its violations would force the
+            caller to guess which check failed.
+
+    Returns:
+        The static-analysis report, for the caller to persist as the
+        audit record of the verdict the registration passed.
+    """
+    entries = candidate_file_entries(artifact_type, canonical_bytes)
+    output_entries = [
+        OutputEntry(
+            path=str(entry.get("path", "")),
+            size_bytes=len(str(entry.get("content", "")).encode("utf-8")),
+        )
+        for entry in entries
+    ]
+    decision = admit_output(output_entries)
+    if not decision.admitted:
+        raise RegistrationRefusedError(
+            "fr018_output_admission",
+            [violation.model_dump() for violation in decision.violations],
+        )
+    declared_paths = tuple(str(entry.get("path", "")) for entry in entries)
+    report = analyze_files(
+        entries,
+        masks=(MutationMask(artifact_type=artifact_type, allowed_paths=declared_paths),),
+        artifact_type=artifact_type,
+        candidate_digest=candidate_digest,
+    )
+    if report.blocked:
+        raise RegistrationRefusedError(
+            "static_analysis", [violation.model_dump() for violation in report.violations]
+        )
+    return report
+
 
 _DIGEST_PREFIX = "sha256:"
 
@@ -370,12 +466,35 @@ class CampaignApiService:
         with session_scope(self._session_factory) as session:
             if campaign_id is not None:
                 self._require_campaign(session, principal.tenant_id, campaign_id)
+            report = None
+            if artifact_type in EXECUTABLE_ARTIFACT_TYPES:
+                # F10: executable classes pass the FR-018 output-admission
+                # and F3 static-analysis gates BEFORE anything is registered —
+                # a candidate that would be refused leaves no artifact row.
+                body_digest = canonical.payload_body_digest(canonical_bytes)
+                candidate_digest = canonical.artifact_digest_for(
+                    artifact_type=artifact_type,
+                    canonical_body_digest=body_digest,
+                    dependencies=[],
+                    capability_requests={},
+                )
+                report = gate_executable_candidate(
+                    artifact_type, canonical_bytes, candidate_digest=candidate_digest
+                )
             registry = RegistryService(session)
             artifact = registry.register_artifact(
                 tenant_id=principal.tenant_id,
                 artifact_type=artifact_type,
                 canonical_bytes=canonical_bytes,
             )
+            if report is not None:
+                self._persist_analysis_report(
+                    session,
+                    tenant_id=principal.tenant_id,
+                    campaign_id=campaign_id,
+                    report=report,
+                    candidate_digest=artifact.digest,
+                )
             proposal = registry.record_proposal(
                 tenant_id=principal.tenant_id,
                 proposed_digest=artifact.digest,
@@ -456,6 +575,88 @@ class CampaignApiService:
             )
         finally:
             client.close()
+
+    # ------------------------------------------------------------------
+    # Analysis reports (F3 record type — F10 read surface)
+    # ------------------------------------------------------------------
+
+    def get_analysis_report(self, principal: Principal, report_id: str) -> StaticAnalysisReportView:
+        """One F3 static-analysis verdict, signature bytes included."""
+        with session_scope(self._session_factory) as session:
+            row = session.execute(
+                select(AnalysisReport).where(
+                    AnalysisReport.tenant_id == principal.tenant_id,
+                    AnalysisReport.report_id == report_id,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                raise AnalysisReportNotFoundError(
+                    f"no analysis report {report_id!r} in this tenant"
+                )
+            return self._analysis_report_view(row)
+
+    def list_analysis_reports(
+        self,
+        principal: Principal,
+        *,
+        candidate_digest: str | None = None,
+        campaign_id: str | None = None,
+    ) -> list[StaticAnalysisReportView]:
+        """The tenant's static-analysis verdicts, optionally scoped."""
+        with session_scope(self._session_factory) as session:
+            query = select(AnalysisReport).where(AnalysisReport.tenant_id == principal.tenant_id)
+            if candidate_digest is not None:
+                query = query.where(AnalysisReport.candidate_digest == candidate_digest)
+            if campaign_id is not None:
+                query = query.where(AnalysisReport.campaign_id == campaign_id)
+            rows = session.scalars(query.order_by(AnalysisReport.created_at)).all()
+            return [self._analysis_report_view(row) for row in rows]
+
+    def _persist_analysis_report(
+        self,
+        session: Session,
+        *,
+        tenant_id: str,
+        campaign_id: str | None,
+        report: StaticAnalysisReport,
+        candidate_digest: str,
+    ) -> None:
+        """Append the F3 verdict row for a registration that passed the gate.
+
+        The row is signed over the report's canonical bytes — the same
+        tamper evidence every other verdict carries — so the audit record
+        of what the gate saw is as trustworthy as the registration itself.
+        """
+        persisted = report.model_copy(update={"candidate_digest": candidate_digest})
+        detached = sign(self._signing_key, persisted.canonical_bytes())
+        session.add(
+            AnalysisReport(
+                tenant_id=tenant_id,
+                report_id=new_id("arpt"),
+                campaign_id=campaign_id,
+                candidate_digest=candidate_digest,
+                artifact_type=persisted.artifact_type,
+                outcome=persisted.outcome,
+                violations=[violation.model_dump() for violation in persisted.violations],
+                verdict_digest=persisted.verdict_digest,
+                signature=detached.signature,
+                signer_public_key=detached.public_key,
+            )
+        )
+
+    def _analysis_report_view(self, row: AnalysisReport) -> StaticAnalysisReportView:
+        return StaticAnalysisReportView(
+            report_id=row.report_id,
+            campaign_id=row.campaign_id,
+            candidate_digest=row.candidate_digest,
+            artifact_type=row.artifact_type,
+            outcome=row.outcome,
+            violations=dict_rows(row.violations),
+            verdict_digest=row.verdict_digest,
+            signature_b64=base64.b64encode(row.signature).decode("ascii"),
+            signer_public_key_b64=base64.b64encode(row.signer_public_key).decode("ascii"),
+            created_at=row.created_at,
+        )
 
     # ------------------------------------------------------------------
     # Evidence

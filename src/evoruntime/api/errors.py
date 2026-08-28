@@ -7,6 +7,8 @@ they name the resource that was refused, never another tenant's data.
 
 from __future__ import annotations
 
+from typing import Any
+
 
 class CampaignApiError(RuntimeError):
     """Base class for FR-014 control-plane errors."""
@@ -52,6 +54,57 @@ class DiffUnavailableError(CampaignApiError):
     there is nothing to diff against."""
 
 
+class ApprovalRequestNotFoundError(CampaignApiError):
+    """No approval request with that id in the caller's tenant."""
+
+
+class AdmissionRecordNotFoundError(CampaignApiError):
+    """No signed admission record with that id in the caller's tenant."""
+
+
+class CompensationPlanNotFoundError(CampaignApiError):
+    """No compensation plan with that id in the caller's tenant."""
+
+
+class AnalysisReportNotFoundError(CampaignApiError):
+    """No static-analysis report with that id in the caller's tenant."""
+
+
 class ApprovalDeniedError(CampaignApiError):
-    """The requested approval decision is not one the control plane
-    records (decisions map onto the E1 status-event kinds)."""
+    """A review-board decision or admission was refused by the
+    two-person governance gate (FR-022 semantics).
+
+    ``reason`` is a machine-readable denial code (self_approval,
+    duplicate_approver, insufficient_approvals, ...) so callers and the
+    CLI can branch on it; the message is the human explanation.
+    """
+
+    def __init__(self, reason: str, detail: str) -> None:
+        super().__init__(detail)
+        self.reason = reason
+
+
+class TierPromotionRefusedError(CampaignApiError):
+    """A tier-3/4 promotion was refused by the Phase 2 tier gate — the
+    approval evidence is missing or malformed, and the promotion is
+    never downgraded to a lower tier to compensate."""
+
+    def __init__(self, tier: int, detail: str) -> None:
+        super().__init__(detail)
+        self.tier = tier
+
+
+class RegistrationRefusedError(CampaignApiError):
+    """Executable-candidate registration was refused by a pre-registration
+    gate (FR-018 output admission or the F3 static-analysis gate).
+
+    Carries the violation payloads so the API boundary can return them —
+    a refusal without its violations would force the caller to guess
+    which check failed.
+    """
+
+    def __init__(self, source: str, violations: list[dict[str, Any]]) -> None:
+        summary = ", ".join(f"{v.get('code', '?')}@{v.get('path', '?')}" for v in violations)
+        super().__init__(f"registration refused by {source}: {summary}")
+        self.source = source
+        self.violations = violations

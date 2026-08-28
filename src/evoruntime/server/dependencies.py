@@ -22,6 +22,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session, sessionmaker
 
+from evoruntime.api.approvals import ApprovalWorkflowService
 from evoruntime.api.service import CampaignApiService
 from evoruntime.core.principal import Principal
 from evoruntime.datasets.service import DatasetService, HoldoutService
@@ -111,7 +112,34 @@ def get_campaign_service(session_factory: SessionFactoryDep) -> CampaignApiServi
     )
 
 
+def get_approval_service(session_factory: SessionFactoryDep) -> ApprovalWorkflowService:
+    """Return the F10 review-board service bound to this deployment.
+
+    The signing key is the evaluation plane's own, loaded through the
+    same gated loader the campaign service uses — admission records are
+    governance artifacts, so they are signed by exactly the identity the
+    Phase 0 policy check lets sign them.
+    """
+    settings = get_settings()
+    server_identity = WorkloadIdentity(
+        role=WorkloadRole.EVALUATOR, subject=settings.evaluator_subject
+    )
+    try:
+        signing_key: Ed25519PrivateKey = load_evaluator_signing_key(server_identity)
+    except SigningKeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"evaluation-plane signing key is not configured: {exc}",
+        ) from exc
+    return ApprovalWorkflowService(
+        session_factory,
+        signing_key=signing_key,
+        evaluator_subject=settings.evaluator_subject,
+    )
+
+
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 DatasetServiceDep = Annotated[DatasetService, Depends(get_dataset_service)]
 HoldoutServiceDep = Annotated[HoldoutService, Depends(get_holdout_service)]
 CampaignServiceDep = Annotated[CampaignApiService, Depends(get_campaign_service)]
+ApprovalServiceDep = Annotated[ApprovalWorkflowService, Depends(get_approval_service)]

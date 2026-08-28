@@ -13,3 +13,4 @@ from __future__ import annotations
 from evoruntime.datasets import models as dataset_models  # noqa: F401
 from evoruntime.db.models import events as events  # noqa: F401
 from evoruntime.db.models import lineage as lineage  # noqa: F401
+from evoruntime.db.models import registry as registry  # noqa: F401

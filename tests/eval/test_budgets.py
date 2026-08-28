@@ -34,7 +34,7 @@ SMALL_BUDGET = TaskBudget(
 def test_the_spec_profile_name_resolves_to_the_versioned_envelope() -> None:
     """`task-budget-v1` is the name the spec's Experiment sample passes."""
     assert resolve_budget_profile("task-budget-v1") is TASK_BUDGET_V1
-    assert set(BUDGET_PROFILES) == {"task-budget-v1"}
+    assert set(BUDGET_PROFILES) == {"task-budget-v1", "task-budget-v2-executable"}
 
 
 def test_unknown_profile_names_the_profiles_that_exist() -> None:

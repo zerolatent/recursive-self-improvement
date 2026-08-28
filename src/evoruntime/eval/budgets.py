@@ -126,8 +126,26 @@ they are versioned rather than tunable per run so a result from August is
 comparable to a result from November.
 """
 
+TASK_BUDGET_V2_EXECUTABLE = TaskBudget(
+    max_input_tokens=120_000,
+    max_output_tokens=16_000,
+    max_tool_calls=120,
+    max_wall_clock_s=1800.0,
+)
+"""The Phase 2 executable-run envelope named by the spec's `task-budget-v2-executable`.
+
+Sized for candidates whose evaluation executes in the F1 sandbox: the
+same context envelope as `task-budget-v1`, but a much larger tool-call
+ceiling — every sandbox execution is a tool call, and an executable
+candidate's read/patch/run/test loop is dominated by them — and a
+thirty-minute wall clock, because process spawn, staging, and teardown
+under physical isolation cost real time that a text-only run never
+spends. Like every profile here it is versioned, not tunable: a result
+run under this name is comparable to any other result run under it.
+"""
+
 BUDGET_PROFILES: MappingProxyType[str, TaskBudget] = MappingProxyType(
-    {"task-budget-v1": TASK_BUDGET_V1}
+    {"task-budget-v1": TASK_BUDGET_V1, "task-budget-v2-executable": TASK_BUDGET_V2_EXECUTABLE}
 )
 """Named, versioned budget profiles. A new envelope gets a new name."""
 
@@ -341,6 +359,7 @@ class BudgetMeter:
 __all__ = [
     "BUDGET_PROFILES",
     "TASK_BUDGET_V1",
+    "TASK_BUDGET_V2_EXECUTABLE",
     "BudgetDimension",
     "BudgetMeter",
     "BudgetUsage",

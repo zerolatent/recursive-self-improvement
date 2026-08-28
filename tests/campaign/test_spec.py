@@ -17,12 +17,15 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from evoruntime.campaign.errors import InvalidCampaignSpecError
 from evoruntime.campaign.spec import (
+    DEFAULT_MAX_SANDBOX_EXECUTIONS,
     SUPPORTED_SPEC_VERSION,
     CampaignSpec,
+    EvaluatorBinding,
     MutableArtifact,
     MutableArtifactSet,
     pin_and_sign,
 )
+from evoruntime.eval.cascade import EvaluatorCostClass
 from tests.campaign.conftest import make_spec, make_spec_mapping
 
 
@@ -319,3 +322,103 @@ class TestPinAndSignV2:
         spec = make_spec()
         pinned = pin_and_sign(spec, Ed25519PrivateKey.generate())
         assert pinned.verify()
+
+
+class TestCascadeEvaluatorBindings:
+    """F6 cascade fields on EvaluatorBinding: defaults, validation, canonical form."""
+
+    def test_binding_without_cascade_fields_defaults_to_the_cheapest_stage(self) -> None:
+        binding = make_spec().evaluators[0]
+        assert binding.stage == 0
+        assert binding.cost_class is EvaluatorCostClass.CHEAP
+        assert binding.short_circuit is True
+
+    def test_cascade_fields_round_trip_through_the_mapping(self) -> None:
+        raw = make_spec_mapping()
+        raw["evaluators"] = [
+            {
+                "name": "lint",
+                "pinned_image": "ghcr.io/evoruntime/lint@sha256:" + "c" * 64,
+                "stage": 0,
+                "cost_class": "cheap",
+                "short_circuit": True,
+            },
+            {
+                "name": "full-holdout",
+                "pinned_image": "ghcr.io/evoruntime/verifier@sha256:" + "c" * 64,
+                "stage": 2,
+                "cost_class": "expensive",
+                "short_circuit": False,
+            },
+        ]
+        spec = CampaignSpec.from_mapping(raw)
+
+        cheap, expensive = spec.evaluators
+        assert cheap.stage == 0 and cheap.cost_class is EvaluatorCostClass.CHEAP
+        assert expensive.stage == 2
+        assert expensive.cost_class is EvaluatorCostClass.EXPENSIVE
+        assert expensive.short_circuit is False
+
+    def test_negative_stage_is_refused(self) -> None:
+        raw = make_spec_mapping()
+        raw["evaluators"][0]["stage"] = -1
+        with pytest.raises(InvalidCampaignSpecError, match="stage must be >= 0"):
+            CampaignSpec.from_mapping(raw)  # type: ignore[arg-type]
+
+    def test_unknown_cost_class_is_refused(self) -> None:
+        raw = make_spec_mapping()
+        raw["evaluators"][0]["cost_class"] = "free"
+        with pytest.raises(InvalidCampaignSpecError, match="not a valid EvaluatorCostClass"):
+            CampaignSpec.from_mapping(raw)  # type: ignore[arg-type]
+
+    def test_non_boolean_short_circuit_is_refused(self) -> None:
+        raw = make_spec_mapping()
+        raw["evaluators"][0]["short_circuit"] = "yes"
+        with pytest.raises(InvalidCampaignSpecError, match="short_circuit"):
+            CampaignSpec.from_mapping(raw)  # type: ignore[arg-type]
+
+    def test_canonical_dict_carries_the_cascade_fields(self) -> None:
+        binding = EvaluatorBinding(
+            name="test-suite",
+            pinned_image="ghcr.io/evoruntime/verifier@sha256:" + "c" * 64,
+            stage=1,
+            cost_class=EvaluatorCostClass.STANDARD,
+            short_circuit=False,
+        )
+        assert binding.to_canonical_dict() == {
+            "name": "test-suite",
+            "pinned_image": "ghcr.io/evoruntime/verifier@sha256:" + "c" * 64,
+            "stage": 1,
+            "cost_class": "standard",
+            "short_circuit": False,
+        }
+
+    def test_cascade_fields_are_part_of_the_pinned_digest(self) -> None:
+        """A cascade order chosen after pinning is not a preregistration."""
+        spec = make_spec()
+        re_staged = replace(spec.evaluators[0], stage=1, cost_class=EvaluatorCostClass.EXPENSIVE)
+        assert replace(spec, evaluators=(re_staged,)).digest != spec.digest
+
+
+class TestSandboxBudgetDimension:
+    """F6 campaign budget dimension for executable (F1) runs."""
+
+    def test_max_sandbox_executions_defaults_to_the_registered_ceiling(self) -> None:
+        budgets = make_spec().budgets
+        assert budgets.max_sandbox_executions == DEFAULT_MAX_SANDBOX_EXECUTIONS
+
+    def test_max_sandbox_executions_round_trips_through_the_mapping(self) -> None:
+        raw = make_spec_mapping()
+        raw["budgets"]["max_sandbox_executions"] = 42
+        spec = CampaignSpec.from_mapping(raw)
+        assert spec.budgets.max_sandbox_executions == 42
+
+    def test_zero_sandbox_executions_is_refused(self) -> None:
+        raw = make_spec_mapping()
+        raw["budgets"]["max_sandbox_executions"] = 0
+        with pytest.raises(InvalidCampaignSpecError, match="max_sandbox_executions"):
+            CampaignSpec.from_mapping(raw)  # type: ignore[arg-type]
+
+    def test_sandbox_dimension_is_part_of_the_canonical_budgets(self) -> None:
+        canonical = make_spec().to_canonical_dict()["budgets"]
+        assert canonical["max_sandbox_executions"] == DEFAULT_MAX_SANDBOX_EXECUTIONS

@@ -536,7 +536,16 @@ class StrategyPluginClient:
                 f"plugin returned {len(raw_proposals)} proposals but only "
                 f"{budget.proposals_remaining} remain in budget"
             )
-        return [Proposal.model_validate(item) for item in raw_proposals]
+        # JSON cannot represent tuples: a composite proposal's member set
+        # arrives as a list of member objects. Coerce the list to the
+        # tuple shape the frozen Proposal schema declares before
+        # validation — lax mode does not reach nested tuple fields.
+        proposals: list[Proposal] = []
+        for item in raw_proposals:
+            if isinstance(item, dict) and isinstance(item.get("members"), list):
+                item = {**item, "members": tuple(item["members"])}
+            proposals.append(Proposal.model_validate(item, strict=False))
+        return proposals
 
     def observe(self, state: SearchState, result: DevEvaluationResult) -> SearchState:
         response = self._transport.request(

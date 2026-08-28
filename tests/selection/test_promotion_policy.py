@@ -229,7 +229,8 @@ class TestFailingConditionsMatrix:
 
 class TestTierRejection:
     def test_tier3_release_is_rejected_before_any_condition(self) -> None:
-        with pytest.raises(TierRejectedError, match="elevated authority"):
+        """Phase 2 (F2): tier 3 is admissible only with two-person approval."""
+        with pytest.raises(TierRejectedError, match="two-person approval"):
             evaluate_promotion(
                 _policy(),
                 _evidence(),
@@ -237,7 +238,8 @@ class TestTierRejection:
             )
 
     def test_tier4_harness_touching_release_is_rejected(self) -> None:
-        with pytest.raises(TierRejectedError, match="elevated authority"):
+        """Phase 2 (F2): tier 4 needs human sign-off and manual initiation."""
+        with pytest.raises(TierRejectedError, match="human sign-off"):
             evaluate_promotion(_policy(), _evidence(), release=_release(touches_harness=True))
 
     def test_direct_memory_write_release_is_rejected(self) -> None:

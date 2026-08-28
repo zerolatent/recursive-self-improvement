@@ -7,14 +7,13 @@ that reaches into the harness is not a tier-1 outcome wearing a familiar
 name; computing the tier from the resolved release is what stops that
 confusion.
 
-Phase 1 outcome space: tier-1 (automatic after the sealed gate and shadow
-evaluation) and tier-2 (owner or explicit policy graduation) — prompt
-bundles, demonstration sets, and suggestion-mode memory in a read-only,
-reversible runtime. Tier-3+ paths exist here because the engine must be
-able to *compute* them (a tier that cannot be computed cannot be refused
-on evidence); they are unreachable by Phase 1 artifact classes, and
-:func:`assert_phase1_admissible` rejects them loudly rather than letting a
-promotion through silently.
+Phase 2 outcome space: tier-1/2 as in Phase 1, plus the executable
+classes (F2) — workflow graphs, tool specs, skill scripts, and algorithms
+resolve to tier 3, harness patches to tier 4. Tier-3 and tier-4 paths are
+no longer unreachable, but they are never *open*:
+:func:`assert_phase2_admissible` admits tier 3 only on two-person approval
+and tier 4 only on human sign-off with manual initiation (no production
+automation). The engine classifies; this gate decides.
 """
 
 from __future__ import annotations
@@ -39,17 +38,18 @@ class AuthorityTier(IntEnum):
     programs, skill packages)."""
 
     TIER_3 = 3
-    """Elevated authority (review board). Exists in the engine; unreachable
-    by Phase 1 artifact classes and rejected before any promotion."""
+    """Elevated authority — two-person approval (FR-022 semantics). Phase 2
+    admits it only with two distinct approvers, neither the requester."""
 
     TIER_4 = 4
-    """Human sign-off plane (harness/runtime patches). Exists in the
-    engine; rejected for Phase 1 like tier 3, only louder."""
+    """Human sign-off plane (harness/runtime patches). Phase 2 admits it
+    only with explicit human sign-off and manual initiation — never
+    through production automation."""
 
 
-#: The tiers Phase 1 may ever produce. Anything at or above the boundary is
-#: a rejection, not a downgrade.
-PHASE_1_MAX_TIER = AuthorityTier.TIER_2
+#: The tiers Phase 2 admits without approval evidence. Anything at or
+#: above the boundary needs the approval evidence the gate demands.
+APPROVAL_FREE_MAX_TIER = AuthorityTier.TIER_2
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +93,30 @@ class ResolvedRelease:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class TierApprovalEvidence:
+    """Approval evidence a tier-3/4 admission is judged on (F2).
+
+    The FR-022 two-person semantics are consumed, not rebuilt: approvers
+    must be two *distinct* humans and neither may be the requester. Tier 4
+    additionally demands explicit human sign-off and manual initiation —
+    a scheduled or automated pipeline can never carry a harness patch to
+    promotion on its own.
+    """
+
+    approvers: tuple[str, ...] = ()
+    """Human approver identities (exactly two distinct ones for tier 3)."""
+
+    requested_by: str | None = None
+    """Who requested the promotion — an approver may not be the requester."""
+
+    human_signoff: bool = False
+    """Explicit human sign-off (tier 4 requirement)."""
+
+    manually_initiated: bool = False
+    """True when a human, not production automation, initiated the change."""
+
+
 def resolve_authority_tier(release: ResolvedRelease) -> AuthorityTier:
     """Compute the §13.3 tier a resolved release warrants.
 
@@ -112,14 +136,21 @@ def resolve_authority_tier(release: ResolvedRelease) -> AuthorityTier:
         return AuthorityTier.TIER_3
 
     # Reversible, suggestion-first releases tier by their resolved classes.
-    # An unknown class fails closed at tier 3 — it is rejected by the Phase 1
-    # gate rather than waved through at tier 1.
+    # An unknown class fails closed at tier 3 — it is rejected by the Phase 2
+    # gate (no approval evidence) rather than waved through at tier 1.
     tier_by_class: dict[str, AuthorityTier] = {
         PluginArtifactType.PROMPT_BUNDLE.value: AuthorityTier.TIER_1,
         PluginArtifactType.DEMONSTRATION_SET.value: AuthorityTier.TIER_1,
         PluginArtifactType.MEMORY_ENTRY.value: AuthorityTier.TIER_2,
         PluginArtifactType.COMPILED_PROMPT_PROGRAM.value: AuthorityTier.TIER_2,
         PluginArtifactType.SKILL_PACKAGE.value: AuthorityTier.TIER_2,
+        # Phase 2 executable classes (PRD §13.3): workflow and tool surface
+        # changes are tier 3; harness patches are tier 4.
+        PluginArtifactType.WORKFLOW_GRAPH.value: AuthorityTier.TIER_3,
+        PluginArtifactType.TOOL_SPEC.value: AuthorityTier.TIER_3,
+        PluginArtifactType.SKILL_SCRIPT.value: AuthorityTier.TIER_3,
+        PluginArtifactType.ALGORITHM.value: AuthorityTier.TIER_3,
+        PluginArtifactType.HARNESS_PATCH.value: AuthorityTier.TIER_4,
     }
     tiers = [tier_by_class.get(cls, AuthorityTier.TIER_3) for cls in release.artifact_classes]
     if not tiers:
@@ -127,28 +158,71 @@ def resolve_authority_tier(release: ResolvedRelease) -> AuthorityTier:
     return max(tiers)
 
 
-def assert_phase1_admissible(tier: AuthorityTier) -> None:
-    """Reject tier-3+ authority for Phase 1 — loudly, never silently.
+def assert_phase2_admissible(
+    tier: AuthorityTier,
+    evidence: TierApprovalEvidence | None = None,
+) -> None:
+    """The Phase 2 tier gate: tier-3/4 authority only with its approvals.
 
-    The tier-3+ paths exist in the engine so this check is a *decision*,
-    not an absence of one. A Phase 1 artifact class that resolves to an
-    elevated tier is refused here, before any promotion decision can be
-    rendered.
+    Tier 3 is admissible ONLY with two-person approval — two distinct
+    human approvers, neither of them the requester (FR-022 semantics,
+    consumed here as a library; F10 builds the API surface). Tier 4 is
+    admissible ONLY with explicit human sign-off AND manual initiation:
+    no production automation may carry a harness patch to promotion.
+
+    Raises:
+        TierRejectedError: the tier's approval evidence is missing or
+            malformed — the promotion is refused, never downgraded.
     """
-    if tier > PHASE_1_MAX_TIER:
+    if tier <= APPROVAL_FREE_MAX_TIER:
+        return
+    approval = evidence or TierApprovalEvidence()
+    if tier is AuthorityTier.TIER_3:
+        _require_two_person_approval(approval)
+        return
+    # Tier 4: human sign-off and manual initiation, both or nothing.
+    missing: list[str] = []
+    if not approval.human_signoff:
+        missing.append("explicit human sign-off")
+    if not approval.manually_initiated:
+        missing.append("manual initiation (no production automation)")
+    if missing:
         raise TierRejectedError(
             int(tier),
-            "the resolved release warrants elevated authority "
-            "(executable content, harness/runtime surface, direct memory "
-            "writes, or an irreversible change) — no Phase 1 artifact class "
-            "may promote through it",
+            "harness/runtime patches require human sign-off and manual "
+            "initiation — missing: " + ", ".join(missing),
+        )
+
+
+def _require_two_person_approval(approval: TierApprovalEvidence) -> None:
+    """Enforce FR-022 two-person semantics on tier-3 approval evidence."""
+    if len(approval.approvers) != 2:
+        raise TierRejectedError(
+            int(AuthorityTier.TIER_3),
+            "tier-3 promotion requires two-person approval — "
+            f"got {len(approval.approvers)} approver(s)",
+        )
+    first, second = approval.approvers[0], approval.approvers[1]
+    if first.casefold() == second.casefold():
+        raise TierRejectedError(
+            int(AuthorityTier.TIER_3),
+            f"two-person approval requires distinct approvers — both named {first!r}",
+        )
+    if approval.requested_by is not None and any(
+        a.casefold() == approval.requested_by.casefold() for a in approval.approvers
+    ):
+        raise TierRejectedError(
+            int(AuthorityTier.TIER_3),
+            f"requester {approval.requested_by!r} cannot approve their own "
+            "tier-3 promotion (self-approval refused)",
         )
 
 
 __all__ = [
-    "PHASE_1_MAX_TIER",
+    "APPROVAL_FREE_MAX_TIER",
     "AuthorityTier",
     "ResolvedRelease",
-    "assert_phase1_admissible",
+    "TierApprovalEvidence",
+    "assert_phase2_admissible",
     "resolve_authority_tier",
 ]

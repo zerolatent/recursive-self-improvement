@@ -56,6 +56,12 @@ class ArmKind(StrEnum):
     ONE_SHOT_CONTROL = "one-shot-control"
     """A single pass with no tool iteration — the floor a real agent must clear."""
 
+    STRATEGY = "strategy"
+    """The campaign's optimizer arm (PRD §11.2): candidates proposed by the
+    strategy plugin from redacted evidence. The three Phase 0 arms above are
+    the control frame this arm is measured against — an optimizer that cannot
+    beat retry-self-consistency under the same envelope has found nothing."""
+
 
 @dataclass(frozen=True, slots=True)
 class Arm:

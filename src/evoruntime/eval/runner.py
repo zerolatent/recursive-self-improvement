@@ -82,6 +82,11 @@ def strategy_for(arm: Arm) -> ArmStrategy:
             )
         case ArmKind.ONE_SHOT_CONTROL:
             return ArmStrategy(max_attempts=1, allow_tools=False, verifier=ClaimedOutcomeVerifier())
+        case ArmKind.STRATEGY:
+            # The strategy arm must mirror the incumbent's envelope exactly:
+            # the comparison is over the artifact, so the only allowed delta
+            # is the artifact itself.
+            return ArmStrategy(max_attempts=1, allow_tools=True, verifier=ClaimedOutcomeVerifier())
 
 
 def usage_delta(before: BudgetUsage, after: BudgetUsage) -> BudgetUsage:

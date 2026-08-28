@@ -1,0 +1,9 @@
+fixture_id: adm_oversized_file
+category: oversized_file
+description: Single file far above the per-file cap.
+expected: reject
+expected_violation: oversized_file
+entries:
+  - path: prompt_bundle/huge.md
+    kind: file
+    size_bytes: 999999999

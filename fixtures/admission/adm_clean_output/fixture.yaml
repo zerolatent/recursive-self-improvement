@@ -1,0 +1,18 @@
+fixture_id: adm_clean_output
+category: clean_output
+description: Control - a well-formed prompt-bundle candidate with a declared helper script; must be admitted.
+expected: admit
+expected_violation: null
+declared_executables:
+  - tools/render.sh
+entries:
+  - path: prompt_bundle/system.md
+    kind: file
+    size_bytes: 2048
+  - path: prompt_bundle/few_shot.json
+    kind: file
+    size_bytes: 512
+  - path: tools/render.sh
+    kind: file
+    size_bytes: 128
+    executable: true

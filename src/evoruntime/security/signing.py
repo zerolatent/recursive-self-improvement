@@ -126,6 +126,9 @@ def verify(detached: DetachedSignature, payload: bytes) -> bool:
     """
     try:
         Ed25519PublicKey.from_public_bytes(detached.public_key).verify(detached.signature, payload)
-    except InvalidSignature:
+    except (InvalidSignature, ValueError):
+        # ValueError covers malformed key/signature material (wrong length,
+        # empty bytes) — a row that never carried a real signature is as
+        # unverified as one carrying a wrong one.
         return False
     return True

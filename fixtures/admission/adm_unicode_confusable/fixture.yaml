@@ -1,0 +1,9 @@
+fixture_id: adm_unicode_confusable
+category: confusable_path
+description: Directory segment spelled with Cyrillic homoglyphs of 'src' to shadow the protected source tree.
+expected: reject
+expected_violation: confusable_path
+entries:
+  - path: "ѕrс/evil.txt"
+    kind: file
+    size_bytes: 128

@@ -1,0 +1,9 @@
+fixture_id: adm_absolute_path
+category: absolute_path
+description: Output entry uses an absolute path to plant a file outside the candidate root.
+expected: reject
+expected_violation: absolute_path
+entries:
+  - path: /etc/cron.d/evil
+    kind: file
+    size_bytes: 64

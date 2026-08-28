@@ -3,14 +3,14 @@
 The PRD's trust-boundary invariant (candidate execution never touches
 holdout content or evaluator key material) only holds if identity is
 explicit and checkable, not inferred from network location or convention.
-This module defines the two Phase 0 workload roles and the identity object
-every policy check in :mod:`evoruntime.security.policy` consumes.
+This module defines the workload roles and the identity object every
+policy check in :mod:`evoruntime.security.policy` consumes.
 
-Phase 0 scope is deliberately narrow: only the roles the evaluation harness
-and candidate sandbox actually need today. The PRD's full plane taxonomy
-(runtime, evolution, execution, evaluation, authority) is a Phase 1+
-concern; Phase 0 collapses it to the one boundary that matters for
-measuring a baseline — evaluator vs candidate-runner.
+Phase 0 collapsed the PRD's plane taxonomy (runtime, evolution, execution,
+evaluation, authority) to the one boundary that matters for measuring a
+baseline — evaluator vs candidate-runner. Phase 1 adds the first
+authority-plane role: the release controller, the only workload identity
+allowed to compare-and-swap the active release pointer (FR-011).
 """
 
 from __future__ import annotations
@@ -28,17 +28,20 @@ _SUBJECT_ENV_VAR = "EVORUNTIME_WORKLOAD_SUBJECT"
 
 
 class WorkloadRole(StrEnum):
-    """The two Phase 0 workload identities.
+    """The workload identities the runtime's policy checks consume.
 
     ``EVALUATOR`` is the evaluation-plane service: it may resolve holdout
     handles and hold evaluator signing keys. ``CANDIDATE_RUNNER`` is
     whatever executes a candidate agent (the incumbent, a retry arm, or a
     future optimizer-produced candidate); it must never see holdout
     content or evaluator key material, no matter what it asks for.
+    ``RELEASE_CONTROLLER`` is the authority-plane service that owns the
+    active release pointer: root-of-trust code, not a plugin (FR-011).
     """
 
     EVALUATOR = "evaluator"
     CANDIDATE_RUNNER = "candidate-runner"
+    RELEASE_CONTROLLER = "release-controller"
 
 
 class WorkloadIdentity(EvoRuntimeBaseModel):

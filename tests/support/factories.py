@@ -116,3 +116,63 @@ def insert_chain_fixture(session: Session, *, tenant_id: str, count: int) -> lis
     session.add_all(rows)
     session.commit()
     return rows
+
+
+def make_campaign_spec_mapping() -> dict[str, Any]:
+    """A minimal valid §11.2 campaign spec as a plain mapping.
+
+    Mirrors the fixture in `tests/campaign/conftest.py` so the API and CLI
+    suites can plan a real campaign without importing from another test
+    package's conftest.
+    """
+    return {
+        "schema_version": 1,
+        "name": "prompt-bundle-campaign-1",
+        "incumbent": {
+            "release_manifest_digest": "sha256:" + "a" * 64,
+            "artifact_type": "prompt_bundle",
+        },
+        "mutable_artifact": {
+            "artifact_type": "prompt_bundle",
+            "paths": ["prompts/system.md"],
+        },
+        "strategy_plugin": {
+            "plugin_id": "evo-prompt-strategist",
+            "pinned_image": "ghcr.io/evoruntime/strategist@sha256:" + "b" * 64,
+        },
+        "arms": [
+            {"id": "incumbent", "kind": "incumbent"},
+            {"id": "retry", "kind": "retry-self-consistency", "max_attempts": 3},
+            {"id": "one-shot", "kind": "one-shot-control"},
+            {"id": "strategy", "kind": "strategy"},
+        ],
+        "datasets": {
+            "dev_partition": "dev-primary",
+            "selection_partition": "selection-primary",
+            "holdout_handle": "holdout://ledger/alpha-1",
+        },
+        "evaluators": [
+            {
+                "name": "coding-verifier",
+                "pinned_image": "ghcr.io/evoruntime/verifier@sha256:" + "c" * 64,
+            }
+        ],
+        "budgets": {
+            "task_budget_profile": "task-budget-v1",
+            "max_proposals": 10,
+            "max_model_tokens": 100_000,
+            "max_wall_clock_minutes": 30.0,
+        },
+        "promotion_policy": {
+            "policy_id": "tier-2-standard",
+            "policy_digest": "sha256:" + "d" * 64,
+        },
+        "statistics": {
+            "alpha": 0.05,
+            "multiplicity": "bonferroni",
+            "bootstrap_iterations": 200,
+            "bootstrap_seed": 7,
+        },
+        "stopping_rules": {"max_rounds": 5, "max_no_improvement_rounds": 2},
+        "metadata": {"owner": "evaluator"},
+    }

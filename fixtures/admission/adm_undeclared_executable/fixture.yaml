@@ -1,0 +1,10 @@
+fixture_id: adm_undeclared_executable
+category: undeclared_executable
+description: Executable helper not declared in the manifest's allowed executables.
+expected: reject
+expected_violation: undeclared_executable
+entries:
+  - path: tools/helper
+    kind: file
+    size_bytes: 256
+    executable: true

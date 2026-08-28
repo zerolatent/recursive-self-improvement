@@ -19,6 +19,7 @@ from enum import StrEnum
 
 from pydantic import Field, field_validator, model_validator
 
+from evoruntime.core.isolation import IsolationTier
 from evoruntime.core.schemas import EvoRuntimeBaseModel
 
 
@@ -210,6 +211,11 @@ class PluginManifest(EvoRuntimeBaseModel):
     limits: ResourceLimits
     reproducibility: Reproducibility
     execution_requirements: ExecutionRequirements | None = None
+    # The isolation tier the plugin's entrypoint runs under (Phase 2 F1).
+    # Defaults to ``executable`` so Phase 1 manifests (subprocess + rlimits,
+    # no network) validate unchanged; the validator cross-checks the tier
+    # against the declared execution requirements below.
+    isolation_tier: IsolationTier = IsolationTier.EXECUTABLE
 
     @model_validator(mode="after")
     def _consistent(self) -> PluginManifest:
@@ -226,7 +232,46 @@ class PluginManifest(EvoRuntimeBaseModel):
                 "artifact types " + ", ".join(executable_types) + " are executable and "
                 "require declared execution_requirements (executables + minimum_tier)"
             )
+        self._cross_check_tier()
         return self
+
+    def _cross_check_tier(self) -> None:
+        """The declared tier must agree with the declared execution needs.
+
+        A tier is a promise about what the entrypoint may do; a manifest
+        whose tier contradicts its own permission request is incoherent and
+        is rejected at parse time, not at spawn time.
+
+        Phase 1 manifests predate this field and do not declare it; their
+        network posture already governs execution, so the strict tier
+        cross-check applies only when the tier is explicit.
+        """
+        if "isolation_tier" not in self.model_fields_set:
+            return
+        network = self.permissions.network
+        if self.isolation_tier is IsolationTier.TEXT_ONLY:
+            # Nothing executes, so nothing may request a network path.
+            if network is not NetworkMode.NONE or self.permissions.model_access:
+                raise ValueError(
+                    "isolation_tier=text-only never executes; it cannot request "
+                    "network access or model calls"
+                )
+        elif self.isolation_tier is IsolationTier.BROKERED:
+            if network is not NetworkMode.BROKERED or not self.permissions.model_hosts:
+                raise ValueError(
+                    "isolation_tier=brokered requires network=brokered with an "
+                    "explicit model_hosts allowlist"
+                )
+        else:
+            # executable / highest: candidate bytes run, but with no direct
+            # network path — model traffic, if any, flows only through the
+            # broker, which the brokered tier declares.
+            if network is not NetworkMode.NONE:
+                raise ValueError(
+                    f"isolation_tier={self.isolation_tier.value} provides no direct "
+                    "network path; declare network=none (use the brokered tier for "
+                    "brokered model routes)"
+                )
 
 
 def validate_manifest(manifest: PluginManifest, runtime_version: str) -> tuple[str, ...]:

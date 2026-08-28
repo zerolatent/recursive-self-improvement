@@ -1,7 +1,7 @@
 """proposal_members — composite proposal member set (F4)
 
 Revision ID: d5e6f7a8b9c0
-Revises: c9d4e801a7b3
+Revises: e7f2a9c41d60
 Create Date: 2026-08-28
 
 Phase 2 deliverable F4: multi-artifact composite proposals. A composite
@@ -47,6 +47,13 @@ def _trigger_name(table_name: str) -> str:
 
 def upgrade() -> None:
     """Upgrade schema."""
+    # Unique target for proposal_members' tenant-scoped FK to
+    # proposal_records (proposal_id alone is already unique; this makes
+    # the composite (tenant_id, proposal_id) referenceable). Must exist
+    # BEFORE proposal_members is created, or the FK itself fails.
+    op.create_unique_constraint(
+        "uq_proposal_records_tenant_proposal", "proposal_records", ["tenant_id", "proposal_id"]
+    )
     op.create_table(
         "proposal_members",
         sa.Column("id", sa.UUID(), nullable=False),
@@ -113,12 +120,6 @@ def upgrade() -> None:
         BEFORE UPDATE OR DELETE ON proposal_members
         FOR EACH ROW EXECUTE FUNCTION evoruntime_forbid_mutation();
         """
-    )
-    # Unique target for proposal_members' tenant-scoped FK to
-    # proposal_records (proposal_id alone is already unique; this makes
-    # the composite (tenant_id, proposal_id) referenceable).
-    op.create_unique_constraint(
-        "uq_proposal_records_tenant_proposal", "proposal_records", ["tenant_id", "proposal_id"]
     )
 
 

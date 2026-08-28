@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Protocol
 
+from evoruntime.campaign.compensation import CompensationActionKind
 from evoruntime.campaign.errors import InvalidCampaignSpecError
 from evoruntime.datasets.partitions import HOLDOUT_HANDLE_SCHEME
 from evoruntime.eval.budgets import resolve_budget_profile
@@ -190,6 +191,93 @@ def _validate_mask_path(path: str) -> None:
         raise InvalidCampaignSpecError(
             f"mutable path {path!r} contains traversal — masks name real paths"
         )
+
+
+@dataclass(frozen=True, slots=True)
+class CompensationActionSpec:
+    """One declared compensating action (F5): what happens to one artifact
+    when the release it belongs to is rolled back.
+
+    Classification is by action name, not by a declared mode: CAS actions
+    (``restore_prior_release_pointer``, ``revoke_artifact``) need no extra
+    execution — the release controller's pointer rollback covers them —
+    while ``run_compensation_hook`` must be executed and evidenced, so it
+    must pin the hook image it runs. An action targeting an artifact class
+    the campaign cannot mutate is refused in :class:`CampaignSpec`.
+    """
+
+    artifact_type: str
+    action: str
+    hook_image: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.artifact_type not in {t.value for t in PluginArtifactType}:
+            raise InvalidCampaignSpecError(
+                f"compensation artifact_type {self.artifact_type!r} is not a Phase 1 artifact class"
+            )
+        try:
+            CompensationActionKind(self.action)
+        except ValueError as exc:
+            raise InvalidCampaignSpecError(
+                f"compensation action {self.action!r} is not a declared compensating "
+                f"action (one of {', '.join(k.value for k in CompensationActionKind)})"
+            ) from exc
+        if self.action == CompensationActionKind.RUN_COMPENSATION_HOOK.value:
+            if self.hook_image is None:
+                raise InvalidCampaignSpecError(
+                    "a run_compensation_hook action must pin its hook image "
+                    "(name@sha256:...) — an unpinned hook is a promise, not a "
+                    "compensating action"
+                )
+            _require_pinned_image(self.hook_image, "compensation hook_image")
+        elif self.hook_image is not None:
+            raise InvalidCampaignSpecError(
+                f"CAS compensation action {self.action!r} takes no hook_image — "
+                "CAS compensations need no extra execution"
+            )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        """Canonical JSON form of this action (hook_image only when declared)."""
+        entry: dict[str, Any] = {
+            "artifact_type": self.artifact_type,
+            "action": self.action,
+        }
+        if self.hook_image is not None:
+            entry["hook_image"] = self.hook_image
+        return entry
+
+
+@dataclass(frozen=True, slots=True)
+class CompensationPlanSection:
+    """The campaign's declared compensation plan (F5): per-artifact
+    compensating actions in execution order.
+
+    Declared before search like every other pinned section — a rollback
+    plan chosen after seeing what broke is not a transaction plan, it is
+    an improvisation with a signature.
+    """
+
+    actions: tuple[CompensationActionSpec, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "actions", tuple(self.actions))
+        if not self.actions:
+            raise InvalidCampaignSpecError(
+                "a compensation plan must declare at least one action — an empty "
+                "plan is not a plan, omit the section"
+            )
+        types = [action.artifact_type for action in self.actions]
+        duplicates = sorted({t for t in types if types.count(t) > 1})
+        if duplicates:
+            raise InvalidCampaignSpecError(
+                f"duplicate artifact_type in the compensation plan: "
+                f"{', '.join(duplicates)} — one compensating action per artifact"
+            )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        """Canonical JSON form of the plan (order-pinned — declared order
+        is execution order)."""
+        return {"actions": [action.to_canonical_dict() for action in self.actions]}
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,6 +510,7 @@ class CampaignSpec:
     promotion_policy: PromotionPolicyRef
     statistics: StatisticsPlan
     stopping_rules: StoppingRules
+    compensation_plan: CompensationPlanSection | None = None
     metadata: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -438,6 +527,7 @@ class CampaignSpec:
             raise InvalidCampaignSpecError("campaign name must be non-empty")
         self._validate_artifact_consistency()
         self._validate_arms()
+        self._validate_compensation_plan()
         if not self.evaluators:
             raise InvalidCampaignSpecError(
                 "a campaign must declare at least one evaluator — an unscored "
@@ -494,6 +584,24 @@ class CampaignSpec:
                     f"found {kinds.count(kind)}"
                 )
 
+    def _validate_compensation_plan(self) -> None:
+        """Compensating actions may only target mutable artifacts (F5).
+
+        A campaign can only compensate what it mutates: an action naming
+        an artifact class outside the mutable set would promise to undo
+        a change the campaign cannot make.
+        """
+        if self.compensation_plan is None:
+            return
+        mutable = {artifact.artifact_type for artifact in self.mutable_artifacts.artifacts}
+        for action in self.compensation_plan.actions:
+            if action.artifact_type not in mutable:
+                raise InvalidCampaignSpecError(
+                    f"compensation action targets {action.artifact_type!r}, which is not "
+                    "in the mutable artifact set — a campaign can only compensate "
+                    "what it mutates"
+                )
+
     @property
     def mutable_artifact(self) -> MutableArtifact:
         """The primary mutable artifact (the incumbent's class).
@@ -538,6 +646,11 @@ class CampaignSpec:
             "promotion_policy": self.promotion_policy.to_canonical_dict(),
             "statistics": self.statistics.to_canonical_dict(),
             "stopping_rules": self.stopping_rules.to_canonical_dict(),
+            "compensation_plan": (
+                self.compensation_plan.to_canonical_dict()
+                if self.compensation_plan is not None
+                else None
+            ),
             "metadata": dict(sorted(self.metadata.items())),
         }
 
@@ -661,6 +774,7 @@ class CampaignSpec:
                         "max_no_improvement_rounds",
                     ),
                 ),
+                compensation_plan=_parse_compensation_plan(raw),
                 metadata={str(k): str(v) for k, v in raw.get("metadata", {}).items()},
             )
         except KeyError as exc:
@@ -671,6 +785,41 @@ class CampaignSpec:
             raise InvalidCampaignSpecError(
                 f"campaign spec field has the wrong shape: {exc}"
             ) from exc
+
+
+def _parse_compensation_plan(raw: dict[str, Any]) -> CompensationPlanSection | None:
+    """Parse the optional F5 compensation-plan section from a spec mapping.
+
+    Absent means no compensating actions are declared (the canonical form
+    carries ``compensation_plan: null``). Present, it must be a mapping
+    with a non-empty ordered ``actions`` list — declared order is
+    execution order.
+    """
+    section = raw.get("compensation_plan")
+    if section is None:
+        return None
+    if not isinstance(section, dict):
+        raise InvalidCampaignSpecError("campaign spec 'compensation_plan' must be a mapping")
+    entries = section.get("actions")
+    if not isinstance(entries, list) or not entries:
+        raise InvalidCampaignSpecError(
+            "a 'compensation_plan' section must declare a non-empty ordered 'actions' list"
+        )
+
+    def _optional_hook_image(entry: dict[str, Any]) -> str | None:
+        hook_image = entry.get("hook_image")
+        return None if hook_image is None else _require_str(hook_image, "hook_image")
+
+    return CompensationPlanSection(
+        actions=tuple(
+            CompensationActionSpec(
+                artifact_type=_require_str(entry["artifact_type"], "compensation artifact_type"),
+                action=_require_str(entry["action"], "compensation action"),
+                hook_image=_optional_hook_image(entry),
+            )
+            for entry in entries
+        )
+    )
 
 
 def _parse_mutable_artifacts(raw: dict[str, Any], schema_version: int) -> MutableArtifactSet:
@@ -785,6 +934,8 @@ __all__ = [
     "V1_MIGRATION_WINDOW_END",
     "CampaignBudgets",
     "CampaignSpec",
+    "CompensationActionSpec",
+    "CompensationPlanSection",
     "DatasetBindings",
     "EvaluatorBinding",
     "IncumbentBinding",

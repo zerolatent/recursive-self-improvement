@@ -57,11 +57,19 @@ from evoruntime.api.schemas import (
     ApprovalRequestView,
     CompensationPlanView,
 )
+from evoruntime.campaign.compensation import (
+    CompensationPlanBuildError,
+)
+from evoruntime.campaign.compensation import (
+    compensation_plan_body as _shared_compensation_plan_body,
+)
+from evoruntime.campaign.compensation import (
+    validate_compensation_actions as _shared_validate_compensation_actions,
+)
 from evoruntime.core.ids import new_id
 from evoruntime.core.principal import Principal
 from evoruntime.db.base import session_scope
 from evoruntime.db.models.approvals import (
-    COMPENSATION_MODES,
     DECISION_KINDS,
     REQUEST_KINDS,
     AdmissionRecord,
@@ -100,26 +108,11 @@ _DIGEST_PREFIX = "sha256:"
 PRIVILEGED_ADMISSION_TIER = int(AuthorityTier.TIER_3)
 
 
-def compensation_plan_body(
-    *,
-    plan_id: str,
-    campaign_id: str | None,
-    manifest_digest: str | None,
-    actions: list[dict[str, Any]],
-) -> bytes:
-    """Canonical bytes a compensation plan's digest and signature cover.
-
-    Pure: the signed body is exactly the declared plan — id, scope, and
-    actions — in a byte-stable form, so a plan whose bytes no longer
-    hash to their digest is detectable, not trusted.
-    """
-    body = {
-        "plan_id": plan_id,
-        "campaign_id": campaign_id,
-        "manifest_digest": manifest_digest,
-        "actions": actions,
-    }
-    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+# The canonical plan bytes have one definition (F5): the campaign
+# package owns them, and this API surface signs over the same bytes —
+# a plan the API accepted and a plan the runtime verifies cannot
+# disagree about what was signed.
+compensation_plan_body = _shared_compensation_plan_body
 
 
 def promotion_body(
@@ -144,29 +137,16 @@ def promotion_body(
 
 def validate_compensation_actions(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Validate the F5 action shape: per-artifact compensating actions,
-    each CAS or requires-execution, with an executed flag."""
-    validated: list[dict[str, Any]] = []
-    for index, action in enumerate(actions):
-        if not isinstance(action, dict):
-            raise InvalidSpecError(f"compensation action #{index} is not an object")
-        artifact_digest = action.get("artifact_digest")
-        mode = action.get("mode")
-        if not isinstance(artifact_digest, str) or not artifact_digest:
-            raise InvalidSpecError(f"compensation action #{index} declares no artifact_digest")
-        if mode not in COMPENSATION_MODES:
-            raise InvalidSpecError(
-                f"compensation action #{index} mode {mode!r} must be one of "
-                f"{', '.join(COMPENSATION_MODES)}"
-            )
-        validated.append(
-            {
-                "artifact_digest": artifact_digest,
-                "action": str(action.get("action", "")),
-                "mode": mode,
-                "executed": bool(action.get("executed", False)),
-            }
-        )
-    return validated
+    each CAS or requires-execution, with an executed flag.
+
+    Delegates to the campaign package's validator (one definition of the
+    action shape) and translates the domain error into this API's
+    ``InvalidSpecError`` so the HTTP contract is unchanged.
+    """
+    try:
+        return _shared_validate_compensation_actions(actions)
+    except CompensationPlanBuildError as exc:
+        raise InvalidSpecError(str(exc)) from exc
 
 
 class ApprovalWorkflowService:

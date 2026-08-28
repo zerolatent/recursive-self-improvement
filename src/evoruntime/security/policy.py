@@ -46,6 +46,22 @@ def require_holdout_access(identity: WorkloadIdentity) -> None:
     _require_role(identity, frozenset({WorkloadRole.EVALUATOR}), action="resolve holdout handles")
 
 
+def require_release_swap_authority(identity: WorkloadIdentity) -> None:
+    """Enforce that only the release-controller role may CAS the active pointer.
+
+    The active release pointer is the runtime's root of trust: whoever can
+    move it decides what every worker resolves (FR-011). The release
+    controller is root-of-trust code, not a plugin, so no other identity —
+    not even the evaluator — may perform the compare-and-swap. Denials are
+    audited by the caller (see ``evoruntime.selection.release_pointer``).
+    """
+    _require_role(
+        identity,
+        frozenset({WorkloadRole.RELEASE_CONTROLLER}),
+        action="compare-and-swap the active release pointer",
+    )
+
+
 def require_evaluator_key_access(identity: WorkloadIdentity) -> None:
     """Enforce that only the evaluator role may read evaluator signing keys.
 

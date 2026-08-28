@@ -411,6 +411,10 @@ class Adapter:
             return None, []
 
         path = Path(journal_path)
+        # Recovery and compaction run before the EventJournal constructor
+        # (the only other mkdir site), so a fresh nested path would crash
+        # here on first use — create the directory before touching the file.
+        path.parent.mkdir(parents=True, exist_ok=True)
         recovered = recover(path)
         if recover_on_start:
             # Compaction renumbers the surviving records from 1, so the

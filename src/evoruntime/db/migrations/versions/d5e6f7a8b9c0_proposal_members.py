@@ -114,6 +114,12 @@ def upgrade() -> None:
         FOR EACH ROW EXECUTE FUNCTION evoruntime_forbid_mutation();
         """
     )
+    # Unique target for proposal_members' tenant-scoped FK to
+    # proposal_records (proposal_id alone is already unique; this makes
+    # the composite (tenant_id, proposal_id) referenceable).
+    op.create_unique_constraint(
+        "uq_proposal_records_tenant_proposal", "proposal_records", ["tenant_id", "proposal_id"]
+    )
 
 
 def downgrade() -> None:
@@ -123,3 +129,4 @@ def downgrade() -> None:
     op.drop_index("ix_proposal_members_member_digest", table_name="proposal_members")
     op.drop_index("ix_proposal_members_tenant_id", table_name="proposal_members")
     op.drop_table("proposal_members")
+    op.drop_constraint("uq_proposal_records_tenant_proposal", "proposal_records", type_="unique")

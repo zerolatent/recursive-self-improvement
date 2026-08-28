@@ -123,6 +123,10 @@ class ProposalRecord(Base):
             ["artifact_content.tenant_id", "artifact_content.digest"],
             name="fk_proposal_records_parent_artifact",
         ),
+        # Composite proposals (F4) reference a proposal row from
+        # proposal_members with a tenant-scoped FK; this constraint is the
+        # unique target it requires (proposal_id alone is already unique).
+        UniqueConstraint("tenant_id", "proposal_id", name="uq_proposal_records_tenant_proposal"),
         Index("ix_proposal_records_tenant_id", "tenant_id"),
         Index("ix_proposal_records_proposed_digest", "tenant_id", "proposed_digest"),
     )

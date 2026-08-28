@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from evoruntime.plugins.composite import composite_digest
+from evoruntime.plugins.composite import composite_canonical_bytes, composite_digest
 from evoruntime.plugins.protocol import ProposalMember
 from evoruntime.registry.errors import (
     ArtifactNotFoundError,
@@ -61,24 +61,33 @@ def test_composite_proposal_round_trips_with_members_in_order(
             "declared_executables": ["scripts/validate.sh"],
         },
     ]
-    composite = composite_digest(
-        [
-            ProposalMember(
-                artifact_type="prompt_bundle",
-                patch=member_patch("a"),
-                declared_executables=(),
-            ),
-            ProposalMember(
-                artifact_type="workflow_graph",
-                patch={"nodes": ["step-1"]},
-                declared_executables=("scripts/validate.sh",),
-            ),
-        ],
+    member_objects = [
+        ProposalMember(
+            artifact_type="prompt_bundle",
+            patch=member_patch("a"),
+            declared_executables=(),
+        ),
+        ProposalMember(
+            artifact_type="workflow_graph",
+            patch={"nodes": ["step-1"]},
+            declared_executables=("scripts/validate.sh",),
+        ),
+    ]
+    composite = composite_digest(member_objects, artifact_type="prompt_bundle")
+    # The composite is registered through the normal registry path with the
+    # canonical member-set bytes as its body, so the registered artifact's
+    # digest equals the composite digest by construction.
+    registered = registry_service.register_artifact(
+        tenant_id=registry_tenant,
         artifact_type="prompt_bundle",
+        canonical_bytes=composite_canonical_bytes(member_objects),
+        dependencies=[],
+        capability_requests={},
     )
+    assert registered.digest == composite
     proposal = registry_service.record_composite_proposal(
         tenant_id=registry_tenant,
-        proposed_digest=primary.digest,  # composite registered as an artifact
+        proposed_digest=registered.digest,  # composite registered as an artifact
         strategy_id="strat_composite_v1",
         members=members,
     )

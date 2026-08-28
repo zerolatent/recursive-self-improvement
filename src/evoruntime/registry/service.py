@@ -251,6 +251,24 @@ class RegistryService:
                 "a composite proposal must carry at least one member — an empty "
                 "member set has nothing for the composite digest to bind"
             )
+        # Member shape is validated up front, before the circular check, so
+        # a malformed member is reported as an InvalidProposalError even
+        # when it would also trip the circular-metadata check. The validated
+        # (position, member, artifact_type, member_digest) tuples carry the
+        # narrowed types into the recording loop.
+        validated_members: list[tuple[int, Mapping[str, Any], str, str]] = []
+        for position, member in enumerate(members):
+            artifact_type = member.get("artifact_type")
+            member_digest = member.get("member_digest")
+            if not isinstance(artifact_type, str) or not artifact_type.strip():
+                raise InvalidProposalError(
+                    f"member at position {position} must declare a non-empty artifact_type"
+                )
+            if not isinstance(member_digest, str) or not member_digest.strip():
+                raise InvalidProposalError(
+                    f"member at position {position} must declare a non-empty member_digest"
+                )
+            validated_members.append((position, member, artifact_type, member_digest))
         if proposed_digest in {m["member_digest"] for m in members if "member_digest" in m}:
             raise CircularMetadataError(
                 f"composite proposal {proposed_digest!r} cannot list its own digest "
@@ -270,17 +288,7 @@ class RegistryService:
         self._session.add(proposal)
         self._session.flush()  # proposal_id must exist before member FKs resolve
 
-        for position, member in enumerate(members):
-            artifact_type = member.get("artifact_type")
-            member_digest = member.get("member_digest")
-            if not isinstance(artifact_type, str) or not artifact_type.strip():
-                raise InvalidProposalError(
-                    f"member at position {position} must declare a non-empty artifact_type"
-                )
-            if not isinstance(member_digest, str) or not member_digest.strip():
-                raise InvalidProposalError(
-                    f"member at position {position} must declare a non-empty member_digest"
-                )
+        for position, member, artifact_type, member_digest in validated_members:
             parent_digest = member.get("parent_digest")
             if parent_digest is not None and not isinstance(parent_digest, str):
                 raise InvalidProposalError(

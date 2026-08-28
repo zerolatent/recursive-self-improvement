@@ -94,7 +94,7 @@ def db_session(database_url: str) -> Generator[Session, None, None]:
         conn.execute(
             text(
                 "TRUNCATE TABLE lineage_edges, lineage_nodes, payloads, "
-                "tombstones, derived_data_records RESTART IDENTITY CASCADE"
+                "tombstones, derived_data_records, memory_entries RESTART IDENTITY CASCADE"
             )
         )
     session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)

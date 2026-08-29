@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any, Protocol
@@ -107,9 +108,11 @@ def _is_admissible_artifact_type(value: str) -> bool:
 
 
 def _require_digest(value: str, what: str) -> str:
-    if not value.startswith(_DIGEST_PREFIX):
+    if not value.startswith(_DIGEST_PREFIX) or not re.fullmatch(
+        r"[0-9a-f]{64}", value[len(_DIGEST_PREFIX) :]
+    ):
         raise InvalidCampaignSpecError(
-            f"{what} must be a sha256 digest ({_DIGEST_PREFIX}...), got {value!r}"
+            f"{what} must be a sha256 digest ({_DIGEST_PREFIX}<64 hex chars>), got {value!r}"
         )
     return value
 

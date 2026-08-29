@@ -533,3 +533,37 @@ class EvoApiClient:
     def canary_status(self, manifest_digest: str) -> dict[str, Any]:
         """GET /v1/releases/{digest}/canary-status — live canary state (H6)."""
         return self._request_dict("GET", f"/v1/releases/{manifest_digest}/canary-status")
+
+    # ------------------------------------------------------------------
+    # claims (H11)
+    # ------------------------------------------------------------------
+
+    def issue_claim_label(
+        self,
+        evidence: dict[str, Any],
+        *,
+        campaign_id: str | None = None,
+        generation1_release_digest: str | None = None,
+        generation2_release_digest: str | None = None,
+    ) -> dict[str, Any]:
+        """POST /v1/claims/label — decide and record a §12.6 claim label.
+
+        The label is decided server-side by the gate; a refusal comes back
+        as an EvoApiError carrying the recorded decision id.
+        """
+        body: dict[str, Any] = dict(evidence)
+        if campaign_id is not None:
+            body["campaign_id"] = campaign_id
+        if generation1_release_digest is not None:
+            body["generation1_release_digest"] = generation1_release_digest
+        if generation2_release_digest is not None:
+            body["generation2_release_digest"] = generation2_release_digest
+        return self._request_dict("POST", "/v1/claims/label", body)
+
+    def list_claim_decisions(self) -> list[dict[str, Any]]:
+        """GET /v1/claims — the tenant's claim decisions, oldest first."""
+        return self._request_list("GET", "/v1/claims")
+
+    def get_claim_decision(self, decision_id: str) -> dict[str, Any]:
+        """GET /v1/claims/{id} — one claim decision, tenant-scoped."""
+        return self._request_dict("GET", f"/v1/claims/{decision_id}")

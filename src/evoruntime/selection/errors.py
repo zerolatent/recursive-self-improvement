@@ -97,6 +97,15 @@ class CasConflictError(SelectionError):
         )
 
 
+class EvidenceAssemblyError(SelectionError):
+    """Recursive-claim evidence could not be assembled from real results.
+
+    Raised when the generation-2 experiment does not name exactly one
+    strategy arm, or names more than one fixed-editor or one-shot arm —
+    an ambiguous claim input fails closed, it does not get averaged.
+    """
+
+
 class PointerAuditError(SelectionError):
     """A pointer operation could not be audited.
 
@@ -109,6 +118,7 @@ class PointerAuditError(SelectionError):
 __all__ = [
     "AlreadyFrozenError",
     "CasConflictError",
+    "EvidenceAssemblyError",
     "InvalidPromotionPolicyError",
     "NominationRuleError",
     "PointerAuditError",

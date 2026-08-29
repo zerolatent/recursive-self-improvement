@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from evoruntime.datasets import models as dataset_models  # noqa: F401
 from evoruntime.db.models import analysis as analysis  # noqa: F401
+from evoruntime.db.models import claims as claims  # noqa: F401
 from evoruntime.db.models import events as events  # noqa: F401
 from evoruntime.db.models import graduation as graduation  # noqa: F401
 from evoruntime.db.models import lineage as lineage  # noqa: F401

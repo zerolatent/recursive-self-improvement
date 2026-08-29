@@ -27,6 +27,7 @@ import base64
 import binascii
 import hashlib
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -41,6 +42,8 @@ from evoruntime.api.errors import (
     CampaignApiError,
     CampaignNotFoundError,
     DiffUnavailableError,
+    DiscoveryReportIntegrityError,
+    DiscoveryReportNotFoundError,
     EvidenceNotFoundError,
     InvalidCampaignTransitionError,
     InvalidSpecError,
@@ -56,6 +59,8 @@ from evoruntime.api.schemas import (
     CampaignSummary,
     CandidateView,
     DiffView,
+    DiscoveryClusterView,
+    DiscoveryReportView,
     EvaluationView,
     EvidenceView,
     ParetoEntry,
@@ -92,6 +97,21 @@ from evoruntime.db.models.registry import (
     ProposalRecord,
     ReleaseManifest,
 )
+from evoruntime.db.trace_reads import MAX_TRACE_PAGE_SIZE, list_traces, reconstruct_trace
+from evoruntime.eval.discovery import (
+    DISCOVERY_ARTIFACT_TYPE,
+    DISCOVERY_REPORT_KIND,
+    DiscoveredTrace,
+    DiscoveryCluster,
+    DiscoveryReport,
+    FailureCategoryName,
+    TraceEventSignal,
+    cluster_failures,
+    validate_taxonomy,
+    verify_discovery_report,
+)
+from evoruntime.lineage.exceptions import PayloadAccessRevokedError, PayloadNotFoundError
+from evoruntime.lineage.payload_store import PayloadStore
 from evoruntime.plugins import StaticAnalysisReport, admit_output, analyze_files
 from evoruntime.plugins.admission import OutputEntry
 from evoruntime.plugins.manifest import EXECUTABLE_ARTIFACT_TYPES
@@ -775,6 +795,270 @@ class CampaignApiService:
             outcome=row.outcome,
             violations=dict_rows(row.violations),
             verdict_digest=row.verdict_digest,
+            signature_b64=base64.b64encode(row.signature).decode("ascii"),
+            signer_public_key_b64=base64.b64encode(row.signer_public_key).decode("ascii"),
+            created_at=row.created_at,
+        )
+
+    # ------------------------------------------------------------------
+    # Discovery reports (H3 record type — rides the analysis-report path)
+    # ------------------------------------------------------------------
+
+    def run_discovery(
+        self,
+        principal: Principal,
+        *,
+        campaign_id: str | None = None,
+        agent_id: str | None = None,
+        release_id: str | None = None,
+        taxonomy: Mapping[str, FailureCategoryName] | None = None,
+        max_representatives: int = 5,
+    ) -> DiscoveryReportView:
+        """Cluster the tenant's trace failures into a signed discovery report (H3).
+
+        Consumes the H2 trace reads (tenant-scoped, same filters the trace
+        list endpoint takes), resolves each event's out-of-line detail body
+        through the D4 payload store, and hands the pure clustering module
+        (``evoruntime.eval.discovery``) plain data. The report is signed over
+        its canonical bytes and persisted as an ``analysis_reports`` row with
+        ``artifact_type='discovery_report'`` — the analysis-report path, no
+        new authoritative table.
+
+        Only the evaluator role runs discovery: it signs with the evaluator
+        key, exactly like every other signed record on this service.
+        """
+        _require_evaluator(principal)
+        resolved_taxonomy = validate_taxonomy(taxonomy)
+        with session_scope(self._session_factory) as session:
+            if campaign_id is not None:
+                self._require_campaign(session, principal.tenant_id, campaign_id)
+            summaries = list_traces(
+                session,
+                principal.tenant_id,
+                agent_id=agent_id,
+                campaign_id=campaign_id,
+                release_id=release_id,
+                limit=MAX_TRACE_PAGE_SIZE,
+            )
+            store = PayloadStore(session)
+            traces = [
+                DiscoveredTrace(
+                    trace_id=summary.trace_id,
+                    task_id=summary.task_id,
+                    agent_id=summary.agent_id,
+                    release_id=summary.release_id,
+                    campaign_id=summary.campaign_id,
+                    events=self._trace_event_signals(
+                        session,
+                        store,
+                        principal.tenant_id,
+                        summary.trace_id,
+                    ),
+                )
+                for summary in summaries
+            ]
+        report = cluster_failures(
+            traces,
+            taxonomy=resolved_taxonomy,
+            campaign_id=campaign_id,
+            agent_id=agent_id,
+            release_id=release_id,
+            max_representatives=max_representatives,
+        )
+        detached = sign(self._signing_key, report.canonical_bytes())
+        report_id = new_id("drpt")
+        with session_scope(self._session_factory) as session:
+            # The row's JSONB payload column carries the full report body
+            # under the kind marker — lossless, so the canonical bytes (and
+            # with them the digest and signature) rebuild exactly on read.
+            # ``candidate_digest`` is a discovery report's own content digest:
+            # the row is not candidate-scoped, but the column is NOT NULL and
+            # the tenant index keys on it.
+            session.add(
+                AnalysisReport(
+                    tenant_id=principal.tenant_id,
+                    report_id=report_id,
+                    campaign_id=campaign_id,
+                    candidate_digest=report.report_digest,
+                    artifact_type=DISCOVERY_ARTIFACT_TYPE,
+                    # Discovery is informational — it blocks nothing, so the
+                    # row's persistence verdict is `pass` (the CHECK allows
+                    # only pass/block, and inventing a third value would
+                    # change the F3 record type's schema).
+                    outcome="pass",
+                    violations=[
+                        {
+                            "kind": DISCOVERY_REPORT_KIND,
+                            "report": json.loads(report.canonical_bytes()),
+                        }
+                    ],
+                    verdict_digest=report.report_digest,
+                    signature=detached.signature,
+                    signer_public_key=detached.public_key,
+                )
+            )
+        return self.get_discovery_report(principal, report_id)
+
+    def get_discovery_report(self, principal: Principal, report_id: str) -> DiscoveryReportView:
+        """One signed discovery report, verified before it is served."""
+        with session_scope(self._session_factory) as session:
+            row = self._require_discovery_row(session, principal.tenant_id, report_id)
+            report = self._rebuild_discovery_report(row)
+            self._verify_discovery_row(row, report)
+            return self._discovery_report_view(row, report)
+
+    def list_discovery_reports(
+        self,
+        principal: Principal,
+        *,
+        campaign_id: str | None = None,
+    ) -> list[DiscoveryReportView]:
+        """The tenant's discovery reports, oldest first, optionally scoped."""
+        with session_scope(self._session_factory) as session:
+            query = select(AnalysisReport).where(
+                AnalysisReport.tenant_id == principal.tenant_id,
+                AnalysisReport.artifact_type == DISCOVERY_ARTIFACT_TYPE,
+            )
+            if campaign_id is not None:
+                query = query.where(AnalysisReport.campaign_id == campaign_id)
+            rows = session.scalars(query.order_by(AnalysisReport.created_at)).all()
+            views = []
+            for row in rows:
+                report = self._rebuild_discovery_report(row)
+                self._verify_discovery_row(row, report)
+                views.append(self._discovery_report_view(row, report))
+            return views
+
+    def _require_discovery_row(
+        self, session: Session, tenant_id: str, report_id: str
+    ) -> AnalysisReport:
+        row = session.execute(
+            select(AnalysisReport).where(
+                AnalysisReport.tenant_id == tenant_id,
+                AnalysisReport.report_id == report_id,
+                AnalysisReport.artifact_type == DISCOVERY_ARTIFACT_TYPE,
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            # Same 404 for "no such report" and "another tenant's report":
+            # the distinction would let a caller enumerate foreign report ids.
+            raise DiscoveryReportNotFoundError(f"no discovery report {report_id!r} in this tenant")
+        return row
+
+    def _trace_event_signals(
+        self, session: Session, store: PayloadStore, tenant_id: str, trace_id: str
+    ) -> tuple[TraceEventSignal, ...]:
+        """Reduce one reconstructed trace to classification signals.
+
+        Detail bodies live out of line (H2 registered them; ingest stores
+        envelopes only), so each event's body is resolved through the D4
+        payload store. A body that was never registered or was tombstoned
+        degrades to an unresolved signal — counted in the report, never a
+        run-ending error, because partial detail is a normal state of the
+        trace store, not a discovery failure.
+        """
+        reconstruction = reconstruct_trace(session, tenant_id, trace_id)
+        if reconstruction is None:  # pragma: no cover - listed traces always reconstruct
+            return ()
+        signals: list[TraceEventSignal] = []
+        for event in reconstruction.events:
+            details: Mapping[str, Any] = {}
+            body_resolved = True
+            if event.envelope.payload_digest is not None:
+                try:
+                    body = store.read(
+                        tenant_id=tenant_id, payload_digest=event.envelope.payload_digest
+                    )
+                    decoded = json.loads(body)
+                    if not isinstance(decoded, dict):
+                        raise ValueError("detail body is not a JSON object")
+                    details = decoded
+                except (
+                    PayloadNotFoundError,
+                    PayloadAccessRevokedError,
+                    ValueError,
+                    json.JSONDecodeError,
+                ):
+                    details = {}
+                    body_resolved = False
+            signals.append(
+                TraceEventSignal(
+                    event_type=event.event_type,
+                    details=details,
+                    body_resolved=body_resolved,
+                )
+            )
+        return tuple(signals)
+
+    def _rebuild_discovery_report(self, row: AnalysisReport) -> DiscoveryReport:
+        """Rebuild the signed report body from the row's stored JSONB payload."""
+        entries = row.violations
+        if len(entries) != 1 or not isinstance(entries[0], dict):
+            raise DiscoveryReportIntegrityError(
+                f"discovery report {row.report_id!r} has a malformed payload"
+            )
+        entry = entries[0]
+        if entry.get("kind") != DISCOVERY_REPORT_KIND or not isinstance(entry.get("report"), dict):
+            raise DiscoveryReportIntegrityError(
+                f"discovery report {row.report_id!r} has a malformed payload"
+            )
+        body = entry["report"]
+        try:
+            clusters = tuple(
+                DiscoveryCluster(
+                    category=cluster["category"],
+                    failure_signature=cluster["failure_signature"],
+                    trace_ids=tuple(cluster["trace_ids"]),
+                    representative_trace_ids=tuple(cluster["representative_trace_ids"]),
+                )
+                for cluster in body["clusters"]
+            )
+            return DiscoveryReport(
+                campaign_id=body["campaign_id"],
+                agent_id=body["agent_id"],
+                release_id=body["release_id"],
+                traces_scanned=body["traces_scanned"],
+                unresolved_events=body["unresolved_events"],
+                clusters=clusters,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DiscoveryReportIntegrityError(
+                f"discovery report {row.report_id!r} has a malformed payload"
+            ) from exc
+
+    def _verify_discovery_row(self, row: AnalysisReport, report: DiscoveryReport) -> None:
+        """Refuse to serve a report whose bytes or signature fail verification."""
+        if report.report_digest != row.verdict_digest or not verify_discovery_report(
+            report, signature=row.signature, public_key=row.signer_public_key
+        ):
+            raise DiscoveryReportIntegrityError(
+                f"discovery report {row.report_id!r} failed signature verification"
+            )
+
+    def _discovery_report_view(
+        self, row: AnalysisReport, report: DiscoveryReport
+    ) -> DiscoveryReportView:
+        return DiscoveryReportView(
+            report_id=row.report_id,
+            campaign_id=report.campaign_id,
+            agent_id=report.agent_id,
+            release_id=report.release_id,
+            traces_scanned=report.traces_scanned,
+            unresolved_events=report.unresolved_events,
+            failure_count=report.failure_count,
+            unclassified_count=report.unclassified_count,
+            categories_hit=list(report.categories_hit),
+            clusters=[
+                DiscoveryClusterView(
+                    category=cluster.category,
+                    failure_signature=cluster.failure_signature,
+                    trace_ids=list(cluster.trace_ids),
+                    representative_trace_ids=list(cluster.representative_trace_ids),
+                    count=cluster.count,
+                )
+                for cluster in report.clusters
+            ],
+            report_digest=row.verdict_digest,
             signature_b64=base64.b64encode(row.signature).decode("ascii"),
             signer_public_key_b64=base64.b64encode(row.signer_public_key).decode("ascii"),
             created_at=row.created_at,

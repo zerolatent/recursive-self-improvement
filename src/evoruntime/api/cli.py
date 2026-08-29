@@ -254,6 +254,18 @@ def cmd_approval_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_campaign_discover(args: argparse.Namespace) -> int:
+    """Cluster trace failures into a signed discovery report (H3)."""
+    with build_client(args.config) as client:
+        result = client.run_discovery(
+            campaign_id=args.campaign_id,
+            agent_id=args.agent_id,
+            release_id=args.release_id,
+        )
+    _print(result)
+    return 0
+
+
 def cmd_candidate_diff(args: argparse.Namespace) -> int:
     """Show a candidate's semantic diff against its parent."""
     with build_client(args.config) as client:
@@ -334,6 +346,15 @@ def build_parser() -> argparse.ArgumentParser:
     inspect.add_argument("--pareto", action="store_true", help="show the Pareto comparison")
     inspect.set_defaults(func=cmd_campaign_inspect)
     _add_config_arg(inspect)
+
+    discover = campaign_sub.add_parser(
+        "discover", help="cluster trace failures into a signed discovery report (H3)"
+    )
+    discover.add_argument("--campaign-id", help="scope clustering to one campaign")
+    discover.add_argument("--agent-id", help="scope clustering to one agent")
+    discover.add_argument("--release-id", help="scope clustering to one release")
+    discover.set_defaults(func=cmd_campaign_discover)
+    _add_config_arg(discover)
 
     release = sub.add_parser("release", help="release lifecycle")
     release_sub = release.add_subparsers(required=True)

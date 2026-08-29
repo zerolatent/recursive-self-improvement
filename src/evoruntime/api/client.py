@@ -337,6 +337,36 @@ class EvoApiClient:
         """GET /v1/approvals/analysis-reports/{id} — one signed F3 verdict."""
         return self._request_dict("GET", f"/v1/approvals/analysis-reports/{report_id}")
 
+    # ------------------------------------------------------------------
+    # discovery (H3)
+    # ------------------------------------------------------------------
+
+    def run_discovery(
+        self,
+        *,
+        campaign_id: str | None = None,
+        agent_id: str | None = None,
+        release_id: str | None = None,
+    ) -> dict[str, Any]:
+        """POST /v1/discovery — cluster trace failures into a signed report."""
+        body: dict[str, Any] = {}
+        if campaign_id is not None:
+            body["campaign_id"] = campaign_id
+        if agent_id is not None:
+            body["agent_id"] = agent_id
+        if release_id is not None:
+            body["release_id"] = release_id
+        return self._request_dict("POST", "/v1/discovery", body)
+
+    def list_discovery_reports(self, *, campaign_id: str | None = None) -> list[dict[str, Any]]:
+        """GET /v1/discovery — signed discovery reports, optionally scoped."""
+        params = f"?campaign_id={campaign_id}" if campaign_id else ""
+        return self._request_list("GET", f"/v1/discovery{params}")
+
+    def get_discovery_report(self, report_id: str) -> dict[str, Any]:
+        """GET /v1/discovery/{id} — one signed discovery report."""
+        return self._request_dict("GET", f"/v1/discovery/{report_id}")
+
     def get_compensation_plan(self, plan_id: str) -> dict[str, Any]:
         """GET /v1/approvals/compensation-plans/{id} — one signed F5 plan."""
         return self._request_dict("GET", f"/v1/approvals/compensation-plans/{plan_id}")

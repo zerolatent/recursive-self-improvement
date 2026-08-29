@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from evoruntime.api.client import EvoApiClient, EvoApiError
+from evoruntime.api.spec_templates import TEMPLATE_KINDS, render_template
 
 DEFAULT_CONFIG_PATH = Path.home() / ".evo" / "config.json"
 
@@ -78,6 +79,105 @@ def _read_json_file(path: str) -> dict[str, Any]:
 def _print(payload: Any) -> None:
     """Print a JSON result — the CLI's only output format."""
     print(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def cmd_campaign_validate(args: argparse.Namespace) -> int:
+    """Dry-run the plan step's validation — refusals surface, nothing registers."""
+    spec = _read_json_file(args.spec_file)
+    with build_client(args.config) as client:
+        result = client.validate_campaign_spec(spec)
+    _print(result)
+    return 0
+
+
+def cmd_campaign_template(args: argparse.Namespace) -> int:
+    """Emit a campaign spec template (v3) to stdout or a file."""
+    template = render_template(args.kind)
+    if args.output:
+        Path(args.output).write_text(json.dumps(template, indent=2) + "\n", encoding="utf-8")
+        print(f"wrote template {args.kind!r} to {args.output}", file=sys.stderr)
+    else:
+        _print(template)
+    return 0
+
+
+def cmd_holdout(args: argparse.Namespace) -> int:
+    """Sealed-holdout lifecycle: one client call per subcommand."""
+    result: Any
+
+    with build_client(args.config) as client:
+        if args.holdout_cmd == "issue":
+            audit = json.loads(args.contamination_audit) if args.contamination_audit else None
+            result = client.issue_holdout_handle(
+                partition_id=args.partition_id,
+                owner=args.owner,
+                alpha_budget_total=args.alpha_budget_total,
+                alpha_per_query=args.alpha_per_query,
+                freshness_window_days=args.freshness_window_days,
+                rotation_plan=args.rotation_plan,
+                contamination_audit=audit,
+            )
+        elif args.holdout_cmd == "describe":
+            result = client.describe_holdout_handle(args.handle_uri)
+        elif args.holdout_cmd == "budget":
+            result = client.holdout_budget(args.handle_uri)
+        elif args.holdout_cmd == "ledger":
+            result = client.holdout_ledger(args.handle_uri)
+        elif args.holdout_cmd == "resolve":
+            result = client.resolve_holdout(args.handle_uri, purpose=args.purpose)
+        elif args.holdout_cmd == "rotate":
+            result = client.rotate_holdout(args.handle_uri)
+        else:  # revoke
+            result = client.revoke_holdout(args.handle_uri)
+    _print(result)
+    return 0
+
+
+def cmd_partitions(args: argparse.Namespace) -> int:
+    """Dataset partition governance records: list, or one by id."""
+    result: Any
+
+    with build_client(args.config) as client:
+        if args.partition_id:
+            result = client.get_partition(args.partition_id)
+        else:
+            result = client.list_partitions(dataset_id=args.dataset_id)
+    _print(result)
+    return 0
+
+
+def cmd_analysis_reports(args: argparse.Namespace) -> int:
+    """Static-analysis reports: list (optionally scoped), or one by id."""
+    result: Any
+
+    with build_client(args.config) as client:
+        if args.report_id:
+            result = client.get_analysis_report(args.report_id)
+        else:
+            result = client.list_analysis_reports(
+                campaign_id=args.campaign_id, candidate_digest=args.candidate_digest
+            )
+    _print(result)
+    return 0
+
+
+def cmd_compensation(args: argparse.Namespace) -> int:
+    """Compensation plans: create (signed actions), list, or one by id."""
+    result: Any
+
+    with build_client(args.config) as client:
+        if args.comp_cmd == "create":
+            result = client.create_compensation_plan(
+                actions=json.loads(Path(args.actions_file).read_text(encoding="utf-8")),
+                campaign_id=args.campaign_id,
+                manifest_digest=args.manifest_digest,
+            )
+        elif args.comp_cmd == "list":
+            result = client.list_compensation_plans(campaign_id=args.campaign_id)
+        else:  # get
+            result = client.get_compensation_plan(args.plan_id)
+    _print(result)
+    return 0
 
 
 # ----------------------------------------------------------------------
@@ -356,6 +456,20 @@ def build_parser() -> argparse.ArgumentParser:
     discover.set_defaults(func=cmd_campaign_discover)
     _add_config_arg(discover)
 
+    validate = campaign_sub.add_parser(
+        "validate", help="dry-run the plan step's validation — nothing is registered"
+    )
+    validate.add_argument("spec_file", help="path to the campaign spec JSON document")
+    validate.set_defaults(func=cmd_campaign_validate)
+    _add_config_arg(validate)
+
+    template = campaign_sub.add_parser(
+        "template", help="emit a campaign spec template (v3) to start from"
+    )
+    template.add_argument("kind", choices=list(TEMPLATE_KINDS), help="template to emit")
+    template.add_argument("--output", help="write the template to this path instead of stdout")
+    template.set_defaults(func=cmd_campaign_template)
+
     release = sub.add_parser("release", help="release lifecycle")
     release_sub = release.add_subparsers(required=True)
 
@@ -445,6 +559,69 @@ def build_parser() -> argparse.ArgumentParser:
     evidence.add_argument("--proposal-id", required=True)
     evidence.set_defaults(func=cmd_candidate_evidence)
     _add_config_arg(evidence)
+
+    datasets = sub.add_parser("datasets", help="dataset partition governance")
+    datasets_sub = datasets.add_subparsers(dest="datasets_cmd", required=True)
+    partitions = datasets_sub.add_parser("partitions", help="partition governance records")
+    partitions.add_argument("--dataset-id", help="scope the listing to one dataset")
+    partitions.add_argument("partition_id", nargs="?", help="one partition by id")
+    partitions.set_defaults(func=cmd_partitions)
+    _add_config_arg(partitions)
+
+    holdout = sub.add_parser("holdout", help="sealed-holdout lifecycle (D5)")
+    holdout_sub = holdout.add_subparsers(dest="holdout_cmd", required=True)
+    issue = holdout_sub.add_parser("issue", help="mint a sealed holdout handle")
+    issue.add_argument("--partition-id", required=True)
+    issue.add_argument("--owner", required=True)
+    issue.add_argument("--alpha-budget-total", required=True)
+    issue.add_argument("--alpha-per-query", required=True)
+    issue.add_argument("--freshness-window-days", type=int, required=True)
+    issue.add_argument("--rotation-plan", required=True)
+    issue.add_argument("--contamination-audit", help="JSON object for the audit record")
+    issue.set_defaults(func=cmd_holdout)
+    for name, help_text in (
+        ("describe", "handle metadata (never content)"),
+        ("budget", "remaining alpha budget"),
+        ("ledger", "the append-only query ledger"),
+        ("rotate", "new token, same content"),
+        ("revoke", "deny later resolutions"),
+    ):
+        cmd_parser = holdout_sub.add_parser(name, help=help_text)
+        cmd_parser.add_argument("handle_uri")
+        cmd_parser.set_defaults(func=cmd_holdout)
+        _add_config_arg(cmd_parser)
+    resolve = holdout_sub.add_parser("resolve", help="evaluator-only resolution (ledgered)")
+    resolve.add_argument("handle_uri")
+    resolve.add_argument("--purpose", required=True)
+    resolve.set_defaults(func=cmd_holdout)
+    _add_config_arg(resolve)
+    _add_config_arg(issue)
+
+    analysis = sub.add_parser("analysis", help="static-analysis reports (E2)")
+    analysis_sub = analysis.add_subparsers(dest="analysis_cmd", required=True)
+    reports = analysis_sub.add_parser("reports", help="analysis reports")
+    reports.add_argument("--campaign-id")
+    reports.add_argument("--candidate-digest")
+    reports.add_argument("report_id", nargs="?", help="one report by id")
+    reports.set_defaults(func=cmd_analysis_reports)
+    _add_config_arg(reports)
+
+    compensation = sub.add_parser("compensation", help="compensation plans (F5)")
+    comp_sub = compensation.add_subparsers(dest="comp_cmd", required=True)
+    comp_create = comp_sub.add_parser("create", help="declare a signed compensation plan")
+    comp_create.add_argument("actions_file", help="JSON list of compensation actions")
+    comp_create.add_argument("--campaign-id")
+    comp_create.add_argument("--manifest-digest")
+    comp_create.set_defaults(func=cmd_compensation)
+    _add_config_arg(comp_create)
+    comp_list = comp_sub.add_parser("list", help="compensation plans, optionally by campaign")
+    comp_list.add_argument("--campaign-id")
+    comp_list.set_defaults(func=cmd_compensation)
+    _add_config_arg(comp_list)
+    comp_get = comp_sub.add_parser("get", help="one compensation plan by id")
+    comp_get.add_argument("plan_id")
+    comp_get.set_defaults(func=cmd_compensation)
+    _add_config_arg(comp_get)
 
     return parser
 

@@ -42,6 +42,22 @@ class CampaignDetail(CampaignSummary):
     candidate_count: int = 0
 
 
+class CampaignSpecValidation(EvoRuntimeBaseModel):
+    """The result of a validate dry-run — what the spec pins, once valid.
+
+    Deliberately a summary, not the spec: the dry-run's contract is "your
+    document parses and passes the plan step's checks", and echoing the
+    whole spec back would invite treating the response as a registration.
+    """
+
+    valid: bool
+    schema_version: int
+    name: str
+    environment: str | None
+    mutable_artifact_types: tuple[str, ...]
+    arm_ids: tuple[str, ...]
+
+
 class AgentView(EvoRuntimeBaseModel):
     """A registered agent plugin."""
 

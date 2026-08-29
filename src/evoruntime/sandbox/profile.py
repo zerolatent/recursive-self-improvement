@@ -38,6 +38,19 @@ class CaptureError(SandboxError):
     """The mutated workspace could not be captured faithfully after a run."""
 
 
+class CaptureFailure(EvoRuntimeBaseModel):
+    """One declared capture path that could not be extracted after a run.
+
+    A capture failure is recorded, not raised: the run happened, enforcement
+    was applied, and destroying the attestation because one declared output
+    is missing would discard the only evidence that it did. The execution
+    worker owns the policy — a partial capture is never a success.
+    """
+
+    path: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
 class ExecutionRefusedError(SandboxError):
     """The requested execution is refused before any process is spawned."""
 
@@ -196,6 +209,10 @@ class EnforcementRecord(EvoRuntimeBaseModel):
     filesystem_contained: bool
     network_namespace: bool
     broker_proxy: bool
+    # The loopback port the egress broker proxy listened on for this run —
+    # recorded so the worker (and a conformance test) can verify the proxy
+    # was actually torn down when the run ended.
+    broker_proxy_port: int | None = None
     write_zone_applied: bool = False
     syscall_denylist: tuple[str, ...] = Field(default=())
     tier_enforcement: TierEnforcement = TierEnforcement.REFERENCE
@@ -227,6 +244,9 @@ class ExecutionAttestation(EvoRuntimeBaseModel):
     # Digest set of the files captured from the mutated workspace (G5) —
     # binds "what the run produced" into the same tamper-evident record.
     captured: tuple[PayloadRef, ...] = Field(default=())
+    # Declared capture paths that could not be extracted (H4): recorded per
+    # path so a partial capture still attests the run that produced it.
+    capture_failures: tuple[CaptureFailure, ...] = Field(default=())
     enforcement: EnforcementRecord
     allow_privileged_syscalls: bool = False
 
@@ -244,6 +264,11 @@ class ExecutionResult(EvoRuntimeBaseModel):
     # time. Empty unless the request declared ``capture_paths``.
     captured: tuple[CapturedPayload, ...] = Field(default=())
 
+    @property
+    def capture_failures(self) -> tuple[CaptureFailure, ...]:
+        """Declared capture paths that could not be extracted (view)."""
+        return self.attestation.capture_failures
+
     # Convenience views over the attestation — the exit facts live there so
     # every consumer reads the same digest-bound record.
     @property
@@ -253,3 +278,7 @@ class ExecutionResult(EvoRuntimeBaseModel):
     @property
     def signal_name(self) -> str | None:
         return self.attestation.signal_name
+
+    @property
+    def timed_out(self) -> bool:
+        return self.attestation.timed_out

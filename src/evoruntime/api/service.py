@@ -56,6 +56,7 @@ from evoruntime.api.schemas import (
     AgentView,
     ApprovalView,
     CampaignDetail,
+    CampaignSpecValidation,
     CampaignSummary,
     CandidateView,
     DiffView,
@@ -434,6 +435,43 @@ class CampaignApiService:
                 )
             )
         return self.get_campaign(principal, campaign_id)
+
+    def validate_campaign_spec(
+        self, principal: Principal, spec_mapping: dict[str, Any]
+    ) -> CampaignSpecValidation:
+        """Dry-run the plan step's validation without registering anything (H4).
+
+        Runs exactly the checks `create_campaign` runs — spec shape (v3),
+        the G6 scaffold-environment construction refusal, and the
+        tenant-environment match — but persists nothing: no campaign row,
+        no signature, and not even a refusal record. A dry-run that wrote
+        state would not be one; refusals here are surfaced to the caller
+        and nowhere else.
+        """
+        try:
+            spec = CampaignSpec.from_mapping(spec_mapping)
+        except Exception as exc:  # InvalidCampaignSpecError and shape errors
+            raise InvalidSpecError(f"campaign spec is invalid: {exc}") from exc
+        artifact_types = tuple(a.artifact_type for a in spec.mutable_artifacts.artifacts)
+        if any(is_scaffold_class(t) for t in artifact_types):
+            environment = self._tenant_policies.environment_for(principal.tenant_id)
+            if environment is not TenantEnvironment.RESEARCH:
+                # Deliberately no refusal record — validate is a read-only
+                # probe; create_campaign is where the audit row belongs.
+                raise TenantRefusalError(
+                    RefusalBoundary.SPEC_CONSTRUCTION,
+                    SCAFFOLD_REQUIRES_RESEARCH,
+                    f"scaffold-class artifacts are refused in the {environment.value} environment "
+                    "(G6) — scaffold mutation exists only in the research tenant",
+                )
+        return CampaignSpecValidation(
+            valid=True,
+            schema_version=spec.schema_version,
+            name=spec.name,
+            environment=spec.environment,
+            mutable_artifact_types=artifact_types,
+            arm_ids=tuple(arm.id for arm in spec.arms),
+        )
 
     def list_campaigns(self, principal: Principal) -> list[CampaignSummary]:
         """The caller's tenant's campaigns, oldest first."""

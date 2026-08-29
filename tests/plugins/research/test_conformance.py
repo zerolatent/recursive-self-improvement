@@ -137,12 +137,23 @@ class TestCompatibilityConformance:
         assert manifest.entrypoint.command == ("python", "-m", plugin_command(module_name)[2])
 
     @pytest.mark.parametrize("module_name", RESEARCH_MODULE_NAMES)
-    def test_manifest_requests_no_network_and_no_model_access(self, module_name: str) -> None:
+    def test_manifest_requests_no_direct_network(self, module_name: str) -> None:
         """The egress broker is the sole network path; a research plugin
-        requests none of it."""
+        never requests direct network access."""
         manifest = assert_manifest_admits(module_name)
         assert manifest.permissions.network.value == "none"
-        assert manifest.permissions.model_access is False
+
+    @pytest.mark.parametrize("module_name", RESEARCH_MODULE_NAMES)
+    def test_manifest_model_access_is_brokered_with_explicit_hosts(self, module_name: str) -> None:
+        """Model access is the §16.6 posture: either none at all, or
+        brokered with an explicit exact-host allowlist the broker
+        matches — never a blanket request."""
+        manifest = assert_manifest_admits(module_name)
+        if not manifest.permissions.model_access:
+            assert manifest.permissions.model_hosts == ()
+            return
+        assert manifest.permissions.model_hosts
+        assert all(host and "/" not in host for host in manifest.permissions.model_hosts)
 
     @pytest.mark.parametrize("module_name", RESEARCH_MODULE_NAMES)
     def test_manifest_is_deterministic_with_seed(self, module_name: str) -> None:

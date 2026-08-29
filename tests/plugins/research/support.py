@@ -26,10 +26,11 @@ from evoruntime.plugins.protocol import (
 from tests.plugins.support import RUNTIME_VERSION
 
 #: (module name, declared artifact type for the campaign context, mutable
-#: paths the campaign exposes). In PRD §16.5 order.
+#: paths the campaign exposes). In PRD §16.5/§16.6 order.
 RESEARCH_PLUGIN_PARAMS: list[tuple[str, str, tuple[str, ...]]] = [
     ("workflow_graph_search", "workflow_graph", ("workflow/",)),
     ("evolutionary_artifact_search", "algorithm", ("algorithm/",)),
+    ("harness_mutator", "scaffold", ("scaffold/",)),
 ]
 
 RESEARCH_MODULE_NAMES = [name for name, _, _ in RESEARCH_PLUGIN_PARAMS]

@@ -110,8 +110,8 @@ class TestPackaging:
         assert isinstance(envelope.get("publicKey"), str) and len(envelope["publicKey"]) > 0
         assert envelope.get("signedDigest", "").startswith("sha256:")
 
-    def test_both_research_modules_are_registered(self) -> None:
-        assert len(RESEARCH_PLUGIN_MODULES) == 2
+    def test_all_research_modules_are_registered(self) -> None:
+        assert len(RESEARCH_PLUGIN_MODULES) == 3
         for module_name in RESEARCH_PLUGIN_MODULES:
             module = load_research_plugin(module_name)
             assert hasattr(module, "build_manifest")

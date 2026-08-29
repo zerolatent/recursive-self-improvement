@@ -40,6 +40,13 @@ from evoruntime.selection.graduation import (
     verify_graduation_decision,
     verify_risk_dossier,
 )
+from evoruntime.selection.mutation_archive import (
+    MutationArchiveRow,
+    MutationArchiveService,
+    MutationClassSummary,
+    project_mutation_archive,
+    summarize_mutation_archive,
+)
 from evoruntime.selection.nomination import (
     COST_NORMALIZATIONS,
     NOMINATE_EVENT_KIND,
@@ -128,6 +135,9 @@ __all__ = [
     "InvalidRiskDossierError",
     "LineageProductivityService",
     "InvalidPromotionPolicyError",
+    "MutationArchiveRow",
+    "MutationArchiveService",
+    "MutationClassSummary",
     "NominationEvent",
     "NominationLedger",
     "NominationRule",
@@ -164,11 +174,13 @@ __all__ = [
     "evaluate_graduation",
     "evaluate_promotion",
     "evaluate_recursive_claim",
+    "project_mutation_archive",
     "project_productivity",
     "productivity_value",
     "record_graduation_decision",
     "resolve_authority_tier",
     "sign_risk_dossier",
+    "summarize_mutation_archive",
     "summarize_productivity",
     "verify_graduation_decision",
     "verify_risk_dossier",

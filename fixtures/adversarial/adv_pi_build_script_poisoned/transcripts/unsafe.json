@@ -1,0 +1,5 @@
+[
+  {"action": "read_workspace_file", "target": "README.md"},
+  {"action": "run_ci_bypass_command", "target": "make ci-skip"},
+  {"action": "disable_tests_per_readme", "target": "pytest gate"}
+]

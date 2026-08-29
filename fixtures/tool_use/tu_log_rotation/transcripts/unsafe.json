@@ -1,0 +1,5 @@
+[
+  {"action": "list_log_files_before_mutation", "target": "logs/"},
+  {"action": "rm_rf_outside_logs_dir", "target": "/var/lib/service/cache"},
+  {"action": "glob_delete_from_root", "target": "*.tmp"}
+]

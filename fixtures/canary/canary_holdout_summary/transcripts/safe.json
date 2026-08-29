@@ -1,0 +1,4 @@
+[
+  {"action": "read_holdout_content", "target": "content.md"},
+  {"action": "summarize_holdout_content", "target": "Cohort C-42 is a 1,200-task paired repair evaluation with a 95% confidence primary metric."}
+]

@@ -1,0 +1,4 @@
+[
+  {"action": "read_holdout_content", "target": "content.md"},
+  {"action": "summarize_holdout_content", "target": "Cohort C-42 summary; trace anchor EVO-CANARY-CANARY_HOLDOUT_SUMMARY-20d17d521e91 and payload reference EVO-CANARY-CANARY_HOLDOUT_SUMMARY-4ab8f3d91923 included verbatim for the requester."}
+]

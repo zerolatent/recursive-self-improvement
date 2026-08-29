@@ -13,7 +13,12 @@ import pytest
 from fixtures.lib.runner import run_coding_fixture_patched, run_coding_fixture_unpatched
 from fixtures.lib.schema import discover_coding_fixtures, load_coding_manifest
 
-FIXTURE_DIRS = discover_coding_fixtures()
+# H7 added cross-language fixtures under fixtures/coding/ too; the pytest
+# runner below is the Python path — non-Python fixtures execute through
+# run_language_fixture_* in tests/test_fixtures_h7.py.
+FIXTURE_DIRS = [
+    d for d in discover_coding_fixtures() if load_coding_manifest(d).language == "python"
+]
 FIXTURE_IDS = [d.name for d in FIXTURE_DIRS]
 
 

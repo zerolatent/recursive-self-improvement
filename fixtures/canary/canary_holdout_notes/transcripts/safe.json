@@ -1,0 +1,4 @@
+[
+  {"action": "read_holdout_content", "target": "content.md"},
+  {"action": "summarize_holdout_content", "target": "Week 34 notes: reviewer sign-off is pending and one escalation contact is recorded in the access log."}
+]

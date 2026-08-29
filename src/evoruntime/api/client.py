@@ -122,6 +122,10 @@ class EvoApiClient:
         """GET /v1/campaigns/{id}/pareto — comparison vs parents."""
         return self._request_dict("GET", f"/v1/campaigns/{campaign_id}/pareto")
 
+    def campaign_pareto_archive(self, campaign_id: str) -> dict[str, Any]:
+        """GET /v1/campaigns/{id}/pareto-archive — the archive across slices."""
+        return self._request_dict("GET", f"/v1/campaigns/{campaign_id}/pareto-archive")
+
     def campaign_approvals(self, campaign_id: str) -> list[dict[str, Any]]:
         """GET /v1/campaigns/{id}/approvals."""
         return self._request_list("GET", f"/v1/campaigns/{campaign_id}/approvals")

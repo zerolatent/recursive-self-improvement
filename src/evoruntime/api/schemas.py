@@ -140,6 +140,57 @@ class ParetoReport(EvoRuntimeBaseModel):
     entries: tuple[ParetoEntry, ...] = ()
 
 
+class SliceSummaryView(EvoRuntimeBaseModel):
+    """One slice value's aggregated outcomes and attested costs.
+
+    Success is the pass rate over the slice's attestation outcomes; every
+    cost number (including latency, `wall_clock_s`) comes from the signed
+    attestation's metrics restricted to COST_METRIC_KEYS — claimed values
+    never enter the archive.
+    """
+
+    dimension: str
+    value: str
+    attestation_count: int
+    pass_count: int
+    success_rate: float | None = None
+    mean_costs: dict[str, float] = {}
+
+
+class ArchiveEntryView(EvoRuntimeBaseModel):
+    """One artifact's aggregated archive record with its frontier role.
+
+    `on_frontier` is computed on read (dominated by nothing); membership
+    is never stored, so the dominance rule stays reviewable in code.
+    """
+
+    artifact_digest: str
+    proposal_ids: list[str] = []
+    attestation_count: int
+    pass_count: int
+    success_rate: float | None = None
+    mean_costs: dict[str, float] = {}
+    dominates: list[str] = []
+    dominated_by: list[str] = []
+    on_frontier: bool = True
+
+
+class ParetoArchiveReport(EvoRuntimeBaseModel):
+    """The campaign's Pareto archive across slices (H5).
+
+    `reconciled` reports whether the stored projection still equals what
+    the pure builder produces from the raw append-only records; `drift`
+    carries one human-readable description per discrepancy.
+    """
+
+    campaign_id: str
+    slice_dimensions: list[str] = []
+    frontier: list[ArchiveEntryView] = []
+    slices: list[SliceSummaryView] = []
+    reconciled: bool = True
+    drift: list[str] = []
+
+
 class ApprovalView(EvoRuntimeBaseModel):
     """One approval decision, recorded as an E1 artifact status event."""
 

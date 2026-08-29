@@ -55,6 +55,7 @@ from evoruntime.api.errors import (
 from evoruntime.api.schemas import (
     AgentView,
     ApprovalView,
+    ArchiveEntryView,
     CampaignDetail,
     CampaignSpecValidation,
     CampaignSummary,
@@ -64,10 +65,12 @@ from evoruntime.api.schemas import (
     DiscoveryReportView,
     EvaluationView,
     EvidenceView,
+    ParetoArchiveReport,
     ParetoEntry,
     ParetoReport,
     ReleaseView,
     RollbackStatusView,
+    SliceSummaryView,
     StaticAnalysisReportView,
     TransitionView,
 )
@@ -127,6 +130,10 @@ from evoruntime.registry import canonical
 from evoruntime.registry.service import RegistryService
 from evoruntime.security.identities import WorkloadIdentity, WorkloadRole
 from evoruntime.security.signing import DetachedSignature, sign
+from evoruntime.selection.pareto_archive import (
+    SLICE_DIMENSIONS,
+    ParetoArchiveService,
+)
 from evoruntime.tenancy.audit import RefusalBoundary, record_refusal
 from evoruntime.tenancy.boundaries import SCAFFOLD_REQUIRES_RESEARCH
 from evoruntime.tenancy.environment import TenantEnvironment, is_scaffold_class
@@ -1276,6 +1283,58 @@ class CampaignApiService:
                 campaign_id=campaign_id,
                 baseline_release_digest=spec.incumbent.release_manifest_digest,
                 entries=tuple(entries),
+            )
+
+    def pareto_archive(self, principal: Principal, campaign_id: str) -> ParetoArchiveReport:
+        """The campaign's Pareto archive across slices (H5).
+
+        Refreshes the rebuildable archive projection from the append-only
+        evidence (an idempotent maintenance write, like a materialized
+        view refresh), then computes the frontier and slice summaries on
+        read. Costs come only from attested metrics; the report carries
+        the reconcile verdict so drift is visible without Python.
+        """
+        with session_scope(self._session_factory) as session:
+            self._require_campaign(session, principal.tenant_id, campaign_id)
+            archive = ParetoArchiveService(session)
+            archive.rebuild(principal.tenant_id)
+            drift = archive.reconcile(principal.tenant_id)
+            frontier = archive.frontier(principal.tenant_id, campaign_id)
+            slices = [
+                summary
+                for dimension in SLICE_DIMENSIONS
+                for summary in archive.slice_summary(principal.tenant_id, campaign_id, dimension)
+            ]
+            return ParetoArchiveReport(
+                campaign_id=campaign_id,
+                slice_dimensions=list(SLICE_DIMENSIONS),
+                frontier=[
+                    ArchiveEntryView(
+                        artifact_digest=entry.artifact_digest,
+                        proposal_ids=list(entry.proposal_ids),
+                        attestation_count=entry.attestation_count,
+                        pass_count=entry.pass_count,
+                        success_rate=entry.success_rate,
+                        mean_costs=dict(entry.mean_cost),
+                        dominates=list(entry.dominates),
+                        dominated_by=list(entry.dominated_by),
+                        on_frontier=entry.on_frontier,
+                    )
+                    for entry in frontier
+                ],
+                slices=[
+                    SliceSummaryView(
+                        dimension=summary.dimension,
+                        value=summary.value,
+                        attestation_count=summary.attestation_count,
+                        pass_count=summary.pass_count,
+                        success_rate=summary.success_rate,
+                        mean_costs=dict(summary.mean_cost),
+                    )
+                    for summary in slices
+                ],
+                reconciled=not drift,
+                drift=list(drift),
             )
 
     def _latest_attestation(

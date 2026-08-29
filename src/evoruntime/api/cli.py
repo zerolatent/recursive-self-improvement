@@ -245,9 +245,11 @@ def cmd_campaign_run(args: argparse.Namespace) -> int:
 
 
 def cmd_campaign_inspect(args: argparse.Namespace) -> int:
-    """Inspect a campaign — detail, or its Pareto comparison."""
+    """Inspect a campaign — detail, Pareto comparison, or the archive."""
     with build_client(args.config) as client:
-        if args.pareto:
+        if args.archive:
+            result = client.campaign_pareto_archive(args.campaign_id)
+        elif args.pareto:
             result = client.campaign_pareto(args.campaign_id)
         else:
             result = client.get_campaign(args.campaign_id)
@@ -469,6 +471,11 @@ def build_parser() -> argparse.ArgumentParser:
     inspect = campaign_sub.add_parser("inspect", help="inspect a campaign")
     inspect.add_argument("--campaign-id", required=True)
     inspect.add_argument("--pareto", action="store_true", help="show the Pareto comparison")
+    inspect.add_argument(
+        "--archive",
+        action="store_true",
+        help="show the Pareto archive across slices (success/cost/latency/safety/task-type)",
+    )
     inspect.set_defaults(func=cmd_campaign_inspect)
     _add_config_arg(inspect)
 

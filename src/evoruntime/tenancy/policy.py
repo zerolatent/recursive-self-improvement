@@ -110,11 +110,21 @@ class TenantPolicyDocument:
             "recursive_claims_enabled": self.recursive_claims_enabled,
         }
 
+    def canonical_bytes(self) -> bytes:
+        """Canonical JSON bytes: sorted keys, no whitespace, UTF-8.
+
+        One definition: the digest is exactly sha256 over these bytes, so
+        a signature made over them (G7's signed seed policies) verifies
+        against the same content address the document publishes.
+        """
+        return json.dumps(
+            self.to_canonical_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+
     @property
     def digest(self) -> str:
         """Content digest of the canonical form (`sha256:...`)."""
-        canonical = json.dumps(self.to_canonical_dict(), sort_keys=True, separators=(",", ":"))
-        return _DIGEST_PREFIX + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return _DIGEST_PREFIX + hashlib.sha256(self.canonical_bytes()).hexdigest()
 
 
 class TenantPolicyRegistry:

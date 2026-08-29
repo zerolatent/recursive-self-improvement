@@ -98,6 +98,10 @@ def _scaffold_spec_mapping(environment: str | None = None) -> dict[str, Any]:
 
     G3 requires a scaffold-mutable spec to pin its mutation classes, so
     the helper carries a minimal valid `mutation_classes` section.
+    G7: a scaffold spec must pin the digest of the tier-4-allowing seed
+    policy its promotions are governed by, so the pin is part of the
+    fixture (a well-formed digest; which policy it names is a
+    deployment-level fact, not a spec-construction one).
     """
     mapping = make_campaign_spec_mapping()
     mapping["incumbent"]["artifact_type"] = "scaffold"
@@ -115,6 +119,7 @@ def _scaffold_spec_mapping(environment: str | None = None) -> dict[str, Any]:
         *mapping["arms"],
         {"id": "fixed-editor", "kind": "fixed-editor", "editor_ref": "evo-prompt-strategist@gen-0"},
     ]
+    mapping["tier4_policy_digest"] = "sha256:" + "a" * 64
     if environment is not None:
         mapping["environment"] = environment
     else:

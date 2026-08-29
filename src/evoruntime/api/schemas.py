@@ -158,7 +158,13 @@ class RollbackStatusView(EvoRuntimeBaseModel):
 
 class ApprovalRequestView(EvoRuntimeBaseModel):
     """A review-board request for a tier-3/4 promotion or privileged
-    plugin admission (F10)."""
+    plugin admission (F10).
+
+    G7: ``human_signoff`` and ``manually_initiated`` are the tier-4
+    evidence legs, recorded when the request was opened and immutable
+    thereafter (the migration's evidence guard). They are always false
+    for tier-3 and privileged-admission requests.
+    """
 
     request_id: str
     kind: str
@@ -170,6 +176,8 @@ class ApprovalRequestView(EvoRuntimeBaseModel):
     tier: int
     justification: str
     requested_by: str
+    human_signoff: bool = False
+    manually_initiated: bool = False
     status: str
     created_at: datetime
 

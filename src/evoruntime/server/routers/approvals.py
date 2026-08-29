@@ -70,15 +70,22 @@ def record_approval(
 
 
 class ApprovalRequestBody(BaseModel):
-    """Open a review-board request. The requester is the verified caller."""
+    """Open a review-board request. The requester is the verified caller.
 
-    kind: str = Field(description="'tier3_promotion' or 'privileged_admission'")
+    G7: ``human_signoff`` and ``manually_initiated`` are the tier-4
+    evidence legs — required (both true) for a ``tier4_promotion``
+    request, refused on every other kind.
+    """
+
+    kind: str = Field(description="'tier3_promotion', 'tier4_promotion', or 'privileged_admission'")
     justification: str = Field(min_length=1, description="why review-board approval is needed")
     campaign_id: str | None = None
     proposal_id: str | None = None
     plugin_id: str | None = None
     content_digest: str | None = None
     privileged_role: str | None = None
+    human_signoff: bool = False
+    manually_initiated: bool = False
 
 
 class DecisionBody(BaseModel):
@@ -106,7 +113,7 @@ def create_approval_request(
     principal: PrincipalDep,
     service: ApprovalServiceDep,
 ) -> ApprovalRequestDetail:
-    """Open a review-board request (tier-3 promotion or privileged admission)."""
+    """Open a review-board request (tier-3/4 promotion or privileged admission)."""
     return service.create_request(
         principal,
         kind=body.kind,
@@ -116,6 +123,8 @@ def create_approval_request(
         plugin_id=body.plugin_id,
         content_digest=body.content_digest,
         privileged_role=body.privileged_role,
+        human_signoff=body.human_signoff,
+        manually_initiated=body.manually_initiated,
     )
 
 

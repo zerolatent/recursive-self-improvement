@@ -518,8 +518,24 @@ class StatisticsPlan:
     multiplicity: MultiplicityMethod
     bootstrap_iterations: int
     bootstrap_seed: int
+    ablation_family: tuple[str, ...] = ()
+    """The preregistered ablation family (FR-101): the component ids the
+    campaign may ablate, pinned at spec time. An ABLATION arm naming a
+    component outside this set is refused — the family is a preregistration,
+    and one that could grow after seeing the deltas would not be one."""
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "ablation_family", tuple(self.ablation_family))
+        for component_id in self.ablation_family:
+            if not component_id or component_id != component_id.strip():
+                raise InvalidCampaignSpecError(
+                    f"ablation family entries must be non-empty and trimmed, got {component_id!r}"
+                )
+        duplicates = sorted(c for c in self.ablation_family if self.ablation_family.count(c) > 1)
+        if duplicates:
+            raise InvalidCampaignSpecError(
+                f"duplicate component in the ablation family: {', '.join(duplicates)}"
+            )
         if not 0.0 < self.alpha < 1.0:
             raise InvalidCampaignSpecError(f"alpha must be in (0, 1), got {self.alpha!r}")
         if self.bootstrap_iterations < MIN_BOOTSTRAP_ITERATIONS:
@@ -535,6 +551,7 @@ class StatisticsPlan:
             "multiplicity": self.multiplicity.value,
             "bootstrap_iterations": self.bootstrap_iterations,
             "bootstrap_seed": self.bootstrap_seed,
+            "ablation_family": list(self.ablation_family),
         }
 
 
@@ -633,6 +650,32 @@ class CampaignSpec:
                     f"(the three Phase 0 control arms plus the strategy arm), "
                     f"found {kinds.count(kind)}"
                 )
+        self._validate_ablation_arms()
+
+    def _validate_ablation_arms(self) -> None:
+        """Hold every ABLATION arm inside the preregistered family (FR-101).
+
+        The ablation family lives in the statistics plan — the analysis is
+        part of the preregistration, so the same closure that pins the
+        nomination metric's namespace pins which components may be ablated.
+        An arm ablating a component the spec never named is a post-hoc
+        ablation, refused at construction.
+        """
+        family = set(self.statistics.ablation_family)
+        for arm in self.arms:
+            if arm.kind is not ArmKind.ABLATION:
+                continue
+            if not self.statistics.ablation_family:
+                raise InvalidCampaignSpecError(
+                    f"ablation arm {arm.id!r} has no preregistered ablation family — "
+                    "declare 'statistics.ablation_family' before any ablation can run"
+                )
+            if arm.component_id not in family:
+                raise InvalidCampaignSpecError(
+                    f"ablation arm {arm.id!r} ablates component {arm.component_id!r}, "
+                    "which is not in the preregistered ablation family — the family "
+                    "is pinned at spec time and cannot grow post-hoc"
+                )
 
     def _validate_compensation_plan(self) -> None:
         """Compensating actions may only target mutable artifacts (F5).
@@ -687,6 +730,10 @@ class CampaignSpec:
                     "id": arm.id,
                     "kind": arm.kind.value,
                     "max_attempts": arm.max_attempts,
+                    # component_id is an ABLATION-only field: omitting it
+                    # for every other kind keeps the canonical bytes (and
+                    # so the digest) stable for specs that predate F8.
+                    **({"component_id": arm.component_id} if arm.component_id is not None else {}),
                 }
                 for arm in self.arms
             ],
@@ -766,6 +813,11 @@ class CampaignSpec:
                         id=_require_str(arm["id"], "arm id"),
                         kind=ArmKind(_require_str(arm["kind"], "arm kind")),
                         max_attempts=_require_int(arm.get("max_attempts", 1), "max_attempts"),
+                        component_id=(
+                            _require_str(arm["component_id"], "arm component_id")
+                            if "component_id" in arm
+                            else None
+                        ),
                     )
                     for arm in raw["arms"]
                 ),
@@ -831,6 +883,10 @@ class CampaignSpec:
                     ),
                     bootstrap_seed=_require_int(
                         raw["statistics"]["bootstrap_seed"], "bootstrap_seed"
+                    ),
+                    ablation_family=tuple(
+                        _require_str(component, "ablation family component")
+                        for component in raw["statistics"].get("ablation_family", ())
                     ),
                 ),
                 stopping_rules=StoppingRules(

@@ -29,9 +29,18 @@ Module layout: `budgets` (the envelope and its meter), `tasks` (task and
 run records), `experiment` (preregistration), `sources` (where tasks come
 from, and the sealed-partition refusal), `backends` (what attempts a
 task), `runner` (execution), `statistics` (bootstrap and multiplicity),
-`results` (aggregation), `errors` (the failure taxonomy).
+`results` (aggregation), `ablation` (marginal-contribution records,
+FR-101), `errors` (the failure taxonomy).
 """
 
+from evoruntime.eval.ablation import (
+    CONTRIBUTIONS_SCHEMA_ID,
+    ContributionStore,
+    MarginalContribution,
+    load_contributions,
+    marginal_contributions,
+    persist_contributions,
+)
 from evoruntime.eval.backends import (
     CHARS_PER_TOKEN_ESTIMATE,
     DEFAULT_MODEL_API_KEY_SECRET,
@@ -86,6 +95,7 @@ from evoruntime.eval.errors import (
     CascadeDefinitionError,
     EvalError,
     ExperimentDefinitionError,
+    MarginalContributionError,
     ScriptedAgentError,
     SealedPartitionError,
     StatisticsError,
@@ -165,6 +175,8 @@ __all__ = [
     "ChatRequest",
     "ChatResponse",
     "ClaimedOutcomeVerifier",
+    "CONTRIBUTIONS_SCHEMA_ID",
+    "ContributionStore",
     "Clock",
     "DEFAULT_MODEL_API_KEY_SECRET",
     "EnvSecretsProvider",
@@ -177,6 +189,8 @@ __all__ = [
     "FrozenClock",
     "HttpChatCompletionClient",
     "InMemoryTaskSource",
+    "MarginalContribution",
+    "MarginalContributionError",
     "MIN_BOOTSTRAP_ITERATIONS",
     "MajorityVoteVerifier",
     "MonotonicClock",
@@ -214,8 +228,11 @@ __all__ = [
     "estimate_input_tokens",
     "holm_adjusted_p_values",
     "holdout_purpose",
+    "load_contributions",
     "load_jsonl_tasks",
+    "marginal_contributions",
     "paired_bootstrap",
+    "persist_contributions",
     "parse_chat_response",
     "parse_holdout_purpose",
     "per_comparison_alpha",

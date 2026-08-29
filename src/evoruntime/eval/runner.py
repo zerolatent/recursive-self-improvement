@@ -72,6 +72,9 @@ def strategy_for(arm: Arm) -> ArmStrategy:
     - one-shot-control: one attempt, no tool loop — the floor a real agent
       must clear, and the arm that shows how much of a result is the
       scaffolding rather than the model.
+    - strategy and ablation: one attempt, tools on, incumbent envelope —
+      both isolate a *content* delta (the proposed artifact, the removed
+      component), so the envelope must not move with them.
     """
     match arm.kind:
         case ArmKind.INCUMBENT:
@@ -86,6 +89,12 @@ def strategy_for(arm: Arm) -> ArmStrategy:
             # The strategy arm must mirror the incumbent's envelope exactly:
             # the comparison is over the artifact, so the only allowed delta
             # is the artifact itself.
+            return ArmStrategy(max_attempts=1, allow_tools=True, verifier=ClaimedOutcomeVerifier())
+        case ArmKind.ABLATION:
+            # Same discipline as the strategy arm: an ablation isolates one
+            # removed component, so the arm must spend the incumbent's
+            # envelope exactly — the only allowed delta is the missing
+            # component. (FR-101.)
             return ArmStrategy(max_attempts=1, allow_tools=True, verifier=ClaimedOutcomeVerifier())
 
 

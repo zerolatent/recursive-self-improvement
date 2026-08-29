@@ -23,11 +23,11 @@ from evoruntime.core.isolation import IsolationTier
 from evoruntime.core.schemas import EvoRuntimeBaseModel
 
 
-# The five Phase 1 low-risk artifact classes, plus the five Phase 2
-# executable classes (F2). The executable classes are admissible only with
-# declared execution requirements (see :class:`ExecutionRequirements`) and
-# only through the Phase 2 tier gate — declaring the type in a manifest is
-# a request, never an authority.
+# The five Phase 1 low-risk artifact classes, the five Phase 2 executable
+# classes (F2), and the Phase 3 scaffold class (G1). The executable classes
+# are admissible only with declared execution requirements (see
+# :class:`ExecutionRequirements`) and only through the tier gate — declaring
+# the type in a manifest is a request, never an authority.
 class PluginArtifactType(StrEnum):
     """Artifact classes a plugin may declare."""
 
@@ -44,6 +44,12 @@ class PluginArtifactType(StrEnum):
     SKILL_SCRIPT = "skill_script"
     ALGORITHM = "algorithm"
     HARNESS_PATCH = "harness_patch"
+    # Phase 3 research class (G1): a whole scaffold source tree, mutated by
+    # DGM/HGM-style campaigns in the research tenant. Distinct from
+    # HARNESS_PATCH — a bounded patch to the evaluation harness (Phase 2
+    # flow) — in both scope (whole tree vs. bounded patch) and flow
+    # (Phase 3 research vs. Phase 2 promotion); both resolve to tier 4.
+    SCAFFOLD = "scaffold"
 
 
 #: Classes whose members execute at runtime. A manifest declaring any of
@@ -57,6 +63,10 @@ EXECUTABLE_ARTIFACT_TYPES: frozenset[PluginArtifactType] = frozenset(
         PluginArtifactType.SKILL_SCRIPT,
         PluginArtifactType.ALGORITHM,
         PluginArtifactType.HARNESS_PATCH,
+        # Phase 3 (G1): the scaffold's correctness oracle is self-edit
+        # conformance — the mutated tree runs against its pinned conformance
+        # suite in the sandbox — so the class is externally executable too.
+        PluginArtifactType.SCAFFOLD,
     }
 )
 

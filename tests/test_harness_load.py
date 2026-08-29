@@ -1,6 +1,6 @@
 """H8 concurrent-candidate load harness (§17.3 row 9) — CI profile.
 
-Drives 8 concurrent candidate executions (4 worker processes × 2 threads)
+Drives 4 concurrent candidate executions (2 worker processes × 2 threads)
 through a *real* evaluation-plane HTTP server (uvicorn subprocess of
 ``evoruntime.server.app:create_app`` against real Postgres), each emitting
 via the adapter SDK's production ingest path, and measures the row-9

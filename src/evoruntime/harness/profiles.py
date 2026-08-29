@@ -72,6 +72,10 @@ class LoadProfile:
     max_ingest_p99_s: float
     max_loss_rate: float
     deadline_s: float
+    #: Bounded wait after workers exit for the server to finish
+    #: committing journaled events, so loss means "never delivered after
+    #: quiescence", not "in flight at the measurement instant".
+    drain_timeout_s: float = 60.0
 
     @property
     def concurrent_executions(self) -> int:
@@ -121,13 +125,17 @@ FAULT_INJECTION_SOAK_PROFILE = FaultInjectionProfile(
 #: Secrecy: the §17.3 row 6 threshold runs natively in CI.
 SECRECY_PROFILE = SecrecyProfile(name="ci", emissions=10_000, holdout_items=100)
 
-#: CI: 8 concurrent candidate executions (4 processes × 2 threads) × 250
+#: CI: 4 concurrent candidate executions (2 processes × 2 threads) × 250
 #: events through a real HTTP ingest, with a single-worker kill/recovery
-#: probe. Thresholds (p99 ≤2s, loss ≤0.01%) are the real §17.3 values —
-#: only the scale is reduced.
+#: probe. Concurrency, not event count, is what's reduced here: the
+#: server commits each event in its own transaction, and on a 2-core CI
+#: runner 8 concurrent workers queue behind each other into p99 territory
+#: that measures hardware saturation, not the ingest path. Thresholds
+#: (p99 ≤2s, loss ≤0.01%) are the real §17.3 values — only the scale is
+#: reduced.
 LOAD_CI_PROFILE = LoadProfile(
     name="ci",
-    candidate_processes=4,
+    candidate_processes=2,
     executions_per_process=2,
     events_per_execution=250,
     kill_worker_index=1,

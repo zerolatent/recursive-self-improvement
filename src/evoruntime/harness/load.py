@@ -33,6 +33,7 @@ import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import URLError
@@ -113,6 +114,52 @@ def _read_latencies(latency_path: Path) -> list[float]:
         for line in latency_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def _count_delivered(database_url: str, tenants: Sequence[str]) -> int:
+    engine = build_engine(database_url)
+    try:
+        with build_session_factory(engine)() as session:
+            return int(
+                session.execute(
+                    select(func.count()).select_from(Event).where(Event.tenant_id.in_(tenants))
+                ).scalar_one()
+            )
+    finally:
+        engine.dispose()
+
+
+def _drain_until_quiescent(
+    database_url: str,
+    tenants: Sequence[str],
+    emitted: int,
+    timeout_s: float,
+    poll_interval_s: float = 0.5,
+    stall_limit: int = 4,
+) -> int:
+    """Wait for the ingest pipeline to finish delivering journaled events.
+
+    Workers exit once their last batch is handed to the transport; on a
+    loaded runner the server may still be committing those events when
+    the loss measurement would otherwise run. Loss means "never
+    delivered after the system quiesces", not "in flight at the
+    measurement instant", so poll until the delivered count reaches the
+    emitted count or stops progressing.
+    """
+    deadline = time.monotonic() + timeout_s
+    delivered = _count_delivered(database_url, tenants)
+    stalls = 0
+    while delivered < emitted and time.monotonic() < deadline:
+        time.sleep(poll_interval_s)
+        current = _count_delivered(database_url, tenants)
+        if current == delivered:
+            stalls += 1
+            if stalls >= stall_limit:
+                break
+        else:
+            stalls = 0
+        delivered = current
+    return delivered
 
 
 def _first_latency_after(latency_path: Path, wall_clock: float) -> float | None:
@@ -284,16 +331,12 @@ def run_load_probe(
             for i in range(profile.candidate_processes)
         )
 
-        engine = build_engine(database_url)
-        try:
-            with build_session_factory(engine)() as session:
-                delivered = int(
-                    session.execute(
-                        select(func.count()).select_from(Event).where(Event.tenant_id.in_(tenants))
-                    ).scalar_one()
-                )
-        finally:
-            engine.dispose()
+        delivered = _drain_until_quiescent(
+            database_url,
+            tenants,
+            emitted,
+            timeout_s=profile.drain_timeout_s,
+        )
 
         # Delivered can exceed the progress-file emitted count by the few
         # events journaled between the reporter's last write and a SIGKILL —

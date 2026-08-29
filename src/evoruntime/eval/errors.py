@@ -29,6 +29,16 @@ class CascadeDefinitionError(EvalError):
     """
 
 
+class MarginalContributionError(EvalError):
+    """A marginal-contribution record set could not be built or restored.
+
+    Raised when an experiment result is missing the comparison an ablation
+    arm is owed, or when contribution bytes fail their content-address
+    check on load — a record that does not hash to its own address is not
+    a record, it is a forgery of one.
+    """
+
+
 class ExperimentDefinitionError(EvalError):
     """An experiment or arm was declared in a way the harness cannot run.
 
@@ -138,11 +148,12 @@ class StatisticsError(EvalError):
 
 __all__ = [
     "BackendCredentialError",
-    "CascadeDefinitionError",
     "BackendRequestError",
     "BudgetExceededError",
+    "CascadeDefinitionError",
     "EvalError",
     "ExperimentDefinitionError",
+    "MarginalContributionError",
     "ScriptedAgentError",
     "SealedPartitionError",
     "StatisticsError",

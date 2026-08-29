@@ -62,6 +62,19 @@ class ArmKind(StrEnum):
     the control frame this arm is measured against — an optimizer that cannot
     beat retry-self-consistency under the same envelope has found nothing."""
 
+    ABLATION = "ablation"
+    """The incumbent's configuration with exactly one component removed
+    (FR-101): the arm's paired delta against the incumbent *is* that
+    component's marginal contribution. Two disciplines govern it. The
+    ablated component must be named (`Arm.component_id`) and must be a
+    member of the experiment's preregistered ablation family — an ablation
+    chosen after seeing the deltas is a post-hoc rationalization, the same
+    closure violation the selection_score namespace guards against. And an
+    ablation arm is exempt from any artifact-shape matching: removing a
+    component can change the candidate's artifact shape (a composite minus
+    one member, a workflow minus one step), so the comparison is paired on
+    tasks, never on artifact shape."""
+
 
 @dataclass(frozen=True, slots=True)
 class Arm:
@@ -76,10 +89,24 @@ class Arm:
     id: str
     kind: ArmKind
     max_attempts: int = 1
+    component_id: str | None = None
+    """The component this arm removes. Required for (and only meaningful to)
+    an ABLATION arm; must be None for every other kind, so a component id
+    on a non-ablation arm is a spec bug that surfaces at construction."""
 
     def __post_init__(self) -> None:
         if not self.id:
             raise ExperimentDefinitionError("arm id must be non-empty")
+        if self.kind is ArmKind.ABLATION:
+            if not self.component_id:
+                raise ExperimentDefinitionError(
+                    f"arm {self.id!r}: an ablation arm must name the component it removes"
+                )
+        elif self.component_id is not None:
+            raise ExperimentDefinitionError(
+                f"arm {self.id!r}: component_id is only meaningful on an "
+                f"{ArmKind.ABLATION.value} arm, got {self.component_id!r}"
+            )
         if self.max_attempts < 1:
             raise ExperimentDefinitionError(
                 f"arm {self.id!r}: max_attempts must be at least 1, got {self.max_attempts}"
@@ -94,6 +121,24 @@ class Arm:
     def retry(cls, arm_id: str, *, max_attempts: int = DEFAULT_RETRY_ATTEMPTS) -> Arm:
         """Build a retry-self-consistency arm with the default attempt cap."""
         return cls(id=arm_id, kind=ArmKind.RETRY_SELF_CONSISTENCY, max_attempts=max_attempts)
+
+    @classmethod
+    def ablation(cls, arm_id: str, component_id: str) -> Arm:
+        """Build an ablation arm that removes one named component."""
+        return cls(id=arm_id, kind=ArmKind.ABLATION, component_id=component_id)
+
+    @property
+    def ablated_component(self) -> str:
+        """The component this arm removes, narrowed to `str`.
+
+        Arm validation guarantees an ABLATION arm carries a component id;
+        this gives callers a `str` without re-checking or casting.
+        """
+        if self.component_id is None:
+            raise ExperimentDefinitionError(
+                f"arm {self.id!r}: not an ablation arm, no component to ablate"
+            )
+        return self.component_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,10 +162,17 @@ class Experiment:
     multiplicity: MultiplicityMethod = MultiplicityMethod.BONFERRONI
     bootstrap_iterations: int = DEFAULT_BOOTSTRAP_ITERATIONS
     bootstrap_seed: int = DEFAULT_BOOTSTRAP_SEED
+    ablation_family: Sequence[str] = ()
+    """The preregistered ablation family (FR-101): the component ids that
+    may be ablated, fixed before any run. An ABLATION arm whose component
+    is outside this set is refused at construction — the family is a
+    preregistration, and a family that could grow after seeing the deltas
+    would not be one."""
     metadata: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "arms", tuple(self.arms))
+        object.__setattr__(self, "ablation_family", tuple(self.ablation_family))
         object.__setattr__(self, "metadata", dict(self.metadata))
 
         if not self.name:
@@ -128,6 +180,7 @@ class Experiment:
         if not self.dataset:
             raise ExperimentDefinitionError("experiment dataset must be non-empty")
         self._validate_arms()
+        self._validate_ablation_family()
         self._validate_partition()
         self._validate_statistics()
         # Resolving here (and discarding the result) turns an unknown profile
@@ -148,6 +201,49 @@ class Experiment:
             raise ExperimentDefinitionError(
                 "an experiment needs exactly one incumbent arm to pair against, "
                 f"found {len(incumbents)}"
+            )
+
+    def _validate_ablation_family(self) -> None:
+        """Hold the ablation arms inside their preregistered family.
+
+        Three refusals, all at construction: an ablation arm with no family
+        declared (nothing was preregistered, so any ablation is post-hoc by
+        definition), an ablation of a component outside the family, and two
+        arms ablating the same component (a duplicated comparison would
+        spend the family's alpha twice for one question).
+        """
+        ablations = [arm for arm in self.arms if arm.kind is ArmKind.ABLATION]
+        if not ablations:
+            if self.ablation_family:
+                raise ExperimentDefinitionError(
+                    "an ablation family is preregistered but no arm ablates any of "
+                    f"its components: {', '.join(self.ablation_family)}"
+                )
+            return
+
+        if not self.ablation_family:
+            raise ExperimentDefinitionError(
+                "an experiment with ablation arms must preregister an ablation "
+                "family — ablations chosen after seeing the deltas are post-hoc"
+            )
+
+        family = set(self.ablation_family)
+        unregistered = sorted(
+            arm.ablated_component for arm in ablations if arm.ablated_component not in family
+        )
+        if unregistered:
+            raise ExperimentDefinitionError(
+                f"ablation arm(s) ablate component(s) outside the preregistered "
+                f"family: {', '.join(unregistered)} — the family is fixed at "
+                "spec time and cannot grow post-hoc"
+            )
+
+        ablated = [arm.ablated_component for arm in ablations]
+        duplicates = sorted({c for c in ablated if ablated.count(c) > 1})
+        if duplicates:
+            raise ExperimentDefinitionError(
+                f"duplicate ablation(s) of component(s): {', '.join(duplicates)} "
+                "— one ablation arm per component"
             )
 
     def _validate_partition(self) -> None:
@@ -181,6 +277,11 @@ class Experiment:
     def candidate_arms(self) -> tuple[Arm, ...]:
         """Every arm that is not the incumbent, in declaration order."""
         return tuple(arm for arm in self.arms if arm.kind is not ArmKind.INCUMBENT)
+
+    @property
+    def ablation_arms(self) -> tuple[Arm, ...]:
+        """The ablation arms, in declaration order."""
+        return tuple(arm for arm in self.arms if arm.kind is ArmKind.ABLATION)
 
     @property
     def budget(self) -> TaskBudget:

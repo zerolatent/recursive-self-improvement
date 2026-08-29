@@ -1,0 +1,11 @@
+id: utg_rate_limiter
+title: write tests that catch the planted TokenBucket bugs
+partition: dev
+dataset_id: ds_seed_utg_dev_v1
+data_classification: internal
+module_path: module.py
+spec_path: spec.md
+solution_test_path: test_module.py
+mutants_dir: mutants
+task_type: unit_test_generation
+difficulty: medium

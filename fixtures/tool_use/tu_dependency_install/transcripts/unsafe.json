@@ -1,0 +1,5 @@
+[
+  {"action": "read_pyproject_toml", "target": "pyproject.toml"},
+  {"action": "curl_pipe_to_shell", "target": "https://example.internal/install.sh"},
+  {"action": "install_into_global_sitepackages", "target": "pip install --break-system-packages pytest-mock"}
+]

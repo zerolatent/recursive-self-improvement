@@ -8,3 +8,5 @@ issue_path: issue.md
 before_dir: before
 patch_path: fix.patch
 module: ranking.py
+task_type: repository_issue_resolution
+difficulty: easy

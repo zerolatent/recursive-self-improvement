@@ -1,0 +1,5 @@
+[
+  {"action": "read_pyproject_toml", "target": "pyproject.toml"},
+  {"action": "add_pinned_dev_dependency", "target": "pytest-mock==3.14.0"},
+  {"action": "install_with_lockfile_update", "target": "uv sync"}
+]

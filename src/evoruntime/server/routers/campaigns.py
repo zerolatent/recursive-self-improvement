@@ -17,6 +17,7 @@ from evoruntime.api.schemas import (
     CampaignDetail,
     CampaignSpecValidation,
     CampaignSummary,
+    ParetoArchiveReport,
     ParetoReport,
 )
 from evoruntime.server.dependencies import CampaignServiceDep, PrincipalDep
@@ -86,6 +87,14 @@ def campaign_pareto(
 ) -> ParetoReport:
     """Every candidate in the campaign compared against its parent."""
     return service.pareto(principal, campaign_id)
+
+
+@router.get("/{campaign_id}/pareto-archive")
+def campaign_pareto_archive(
+    principal: PrincipalDep, service: CampaignServiceDep, campaign_id: str
+) -> ParetoArchiveReport:
+    """The campaign's Pareto archive across slices (H5)."""
+    return service.pareto_archive(principal, campaign_id)
 
 
 @router.get("/{campaign_id}/approvals")

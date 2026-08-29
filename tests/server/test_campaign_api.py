@@ -400,6 +400,71 @@ def test_campaign_pareto_splits_gains_regressions_and_costs(
     assert entry["costs"] == {"wall_clock_s": 120.0}
 
 
+def test_campaign_pareto_archive_reports_frontier_and_slices(
+    client: TestClient, tenant_id: str
+) -> None:
+    headers = _headers(tenant_id)
+    planned = _plan_campaign(client, headers)
+    cheap = _register_candidate(
+        client,
+        headers,
+        content=PARENT_BYTES,
+        campaign_id=planned["campaign_id"],
+    )
+    expensive = _register_candidate(
+        client,
+        headers,
+        content=CANDIDATE_BYTES,
+        campaign_id=planned["campaign_id"],
+    )
+    # Slice annotations ride on the signed evaluations; costs are attested
+    # numbers only. The cheap artifact passes at lower attested cost, so it
+    # dominates the expensive one on the shared total_tokens metric.
+    _record_evaluation(
+        client,
+        headers,
+        cheap["artifact_digest"],
+        {"total_tokens": 100.0, "task_type": "repository_issue_resolution"},
+    )
+    _record_evaluation(
+        client,
+        headers,
+        expensive["artifact_digest"],
+        {"total_tokens": 200.0, "task_type": "repository_issue_resolution"},
+    )
+
+    response = client.get(f"/v1/campaigns/{planned['campaign_id']}/pareto-archive", headers=headers)
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["campaign_id"] == planned["campaign_id"]
+    assert report["reconciled"] is True
+    assert report["drift"] == []
+    assert report["slice_dimensions"] == ["task_type", "difficulty", "safety_class"]
+
+    frontier = {entry["artifact_digest"]: entry for entry in report["frontier"]}
+    assert frontier[cheap["artifact_digest"]]["on_frontier"] is True
+    assert frontier[expensive["artifact_digest"]]["on_frontier"] is False
+    assert frontier[cheap["artifact_digest"]]["dominates"] == [expensive["artifact_digest"]]
+
+    slices = report["slices"]
+    task_slices = [s for s in slices if s["dimension"] == "task_type"]
+    assert len(task_slices) == 1
+    assert task_slices[0]["value"] == "repository_issue_resolution"
+    assert task_slices[0]["attestation_count"] == 2
+    assert task_slices[0]["success_rate"] == 1.0
+    assert task_slices[0]["mean_costs"]["total_tokens"] == pytest.approx(150.0)
+
+
+def test_campaign_pareto_archive_is_tenant_scoped(client: TestClient, tenant_id: str) -> None:
+    other_tenant = f"tnt_other_{tenant_id[-6:]}"
+    response = client.get(
+        "/v1/campaigns/camp_missing/pareto-archive", headers=_headers(other_tenant)
+    )
+
+    assert response.status_code == 404
+
+
 # ----------------------------------------------------------------------
 # approvals
 # ----------------------------------------------------------------------

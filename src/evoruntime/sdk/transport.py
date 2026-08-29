@@ -18,15 +18,17 @@ from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from evoruntime.core.events import EventEnvelope
+from evoruntime.core.events import DataClassification, EventEnvelope
 from evoruntime.security.identities import WorkloadIdentity
 
 INGEST_PATH = "/v1/events:ingest"
+PAYLOADS_PATH = "/v1/payloads"
 DEFAULT_TIMEOUT_S = 5.0
 
 IDENTITY_HEADER = "x-evoruntime-identity"
@@ -148,6 +150,87 @@ class HttpIngestTransport:
 
     def close(self) -> None:
         """No-op: `urlopen` holds no connection across calls."""
+
+
+class PayloadUploadError(RuntimeError):
+    """Payload bytes could not be stored: network failure, timeout, or 4xx/5xx.
+
+    Unlike event emission (buffered, retried, never blocking the agent),
+    payload upload is synchronous — the caller needs the digest to be
+    durable *before* it records that digest in a tool_call/artifact_loaded
+    event, so there is nothing to retry in the background. The agent decides
+    whether to retry, fail the tool call, or continue without the payload.
+    """
+
+
+class PayloadTransport(Protocol):
+    """How `Trace.register_payload` stores payload bytes. Swappable for
+    tests and for future transports, mirroring `IngestTransport`."""
+
+    def upload(self, content: bytes, *, classification: DataClassification) -> None:
+        """Store `content` under its classification, or raise
+        :class:`PayloadUploadError`."""
+        ...
+
+    def close(self) -> None:
+        """Release any transport-held resources."""
+        ...
+
+
+class HttpPayloadTransport:
+    """POSTs raw payload bytes to the evaluation plane's payload endpoint."""
+
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        tenant_id: str,
+        identity: WorkloadIdentity,
+        timeout_s: float = DEFAULT_TIMEOUT_S,
+        path: str = PAYLOADS_PATH,
+    ) -> None:
+        self._url = endpoint.rstrip("/") + path
+        self._timeout_s = timeout_s
+        self._headers = {
+            "content-type": "application/octet-stream",
+            IDENTITY_HEADER: identity.subject,
+            ROLE_HEADER: identity.role.value,
+            TENANT_HEADER: tenant_id,
+        }
+
+    def upload(self, content: bytes, *, classification: DataClassification) -> None:
+        url = self._url + "?" + urllib.parse.urlencode({"classification": classification.value})
+        request = urllib.request.Request(url, data=content, headers=self._headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout_s):
+                pass
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:512]
+            raise PayloadUploadError(f"payload upload returned HTTP {exc.code}: {detail}") from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise PayloadUploadError(f"payload upload to {self._url} failed: {exc}") from exc
+
+    def close(self) -> None:
+        """No-op: `urlopen` holds no connection across calls."""
+
+
+class DiscardingPayloadTransport:
+    """Accepts every payload and stores it nowhere.
+
+    For offline agent runs and tests, mirroring `DiscardingIngestTransport`:
+    it records what it was asked to upload so a test can assert on it, and
+    reports success so the caller's digest-recording path behaves exactly as
+    it does in production.
+    """
+
+    def __init__(self) -> None:
+        self.uploads: list[tuple[bytes, DataClassification]] = []
+
+    def upload(self, content: bytes, *, classification: DataClassification) -> None:
+        self.uploads.append((content, classification))
+
+    def close(self) -> None:
+        """No-op."""
 
 
 class DiscardingIngestTransport:

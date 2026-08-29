@@ -36,6 +36,7 @@ from evoruntime.datasets.errors import (
     PartitionNotFoundError,
     PartitionStorageIdentityError,
 )
+from evoruntime.lineage.exceptions import PayloadAccessRevokedError, PayloadNotFoundError
 from evoruntime.registry.errors import ArtifactNotFoundError
 
 
@@ -146,6 +147,20 @@ async def handle_registration_refused(_: Request, exc: Exception) -> JSONRespons
     )
 
 
+async def handle_payload_not_found(_: Request, exc: Exception) -> JSONResponse:
+    """Render a missing/foreign payload digest as 404 without echoing internals."""
+    return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": "not found"})
+
+
+async def handle_payload_revoked(_: Request, exc: Exception) -> JSONResponse:
+    """Render a tombstoned payload as 410 — deletion on request is provable,
+    and the honest status code is 'gone', not 'never existed'."""
+    return JSONResponse(
+        status_code=status.HTTP_410_GONE,
+        content={"detail": "payload access revoked by deletion request"},
+    )
+
+
 async def handle_campaign_api_error(_: Request, exc: Exception) -> JSONResponse:
     """Fallback for remaining control-plane errors: 400 with the reason."""
     if not isinstance(exc, CampaignApiError):  # pragma: no cover - registered per type
@@ -179,4 +194,9 @@ def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ReleaseStateError, handle_release_state)
     app.add_exception_handler(DiffUnavailableError, handle_diff_unavailable)
     app.add_exception_handler(AdapterNotConfiguredError, handle_adapter_not_configured)
+    # H2 payload reads: a tenant-scoped lookup that misses is 404; a digest
+    # whose access a deletion request revoked is 410 — provably deleted, not
+    # silently missing.
+    app.add_exception_handler(PayloadNotFoundError, handle_payload_not_found)
+    app.add_exception_handler(PayloadAccessRevokedError, handle_payload_revoked)
     app.add_exception_handler(CampaignApiError, handle_campaign_api_error)

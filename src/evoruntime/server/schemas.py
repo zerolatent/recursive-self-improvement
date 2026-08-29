@@ -7,6 +7,7 @@ reporting — not data contracts other services persist or hash.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -55,3 +56,45 @@ class ChainVerificationResponse(BaseModel):
     event_count: int
     valid: bool
     violations: list[ChainViolationResponse]
+
+
+class TraceSummaryResponse(BaseModel):
+    """One trace as listed: identity and span, no event bodies."""
+
+    trace_id: str
+    task_id: str
+    agent_id: str
+    release_id: str
+    campaign_id: str | None
+    event_count: int
+    first_occurred_at: datetime
+    last_occurred_at: datetime
+
+
+class TraceEventView(BaseModel):
+    """One reconstructed event: its chain position, hash verdict, and envelope."""
+
+    chain_seq: int
+    event_id: str
+    type: str
+    occurred_at: datetime
+    event_hash: str
+    hash_valid: bool
+    envelope: dict[str, Any]
+
+
+class TraceReconstructionResponse(BaseModel):
+    """A trace's events in `chain_seq` order with per-event integrity verdicts."""
+
+    trace_id: str
+    event_count: int
+    valid: bool
+    events: list[TraceEventView]
+
+
+class PayloadRegistrationResponse(BaseModel):
+    """The content digest an upload is addressable by, with its classification."""
+
+    payload_digest: str
+    byte_size: int
+    data_classification: str

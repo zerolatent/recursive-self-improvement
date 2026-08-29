@@ -81,6 +81,11 @@ def _envelope_from_row(row: Event) -> EventEnvelope:
     )
 
 
+#: Public read-side alias: trace reconstruction (H2) rebuilds envelopes the
+#: same way verification does, and must never fork this conversion.
+envelope_from_row = _envelope_from_row
+
+
 def verify_chain(session: Session, tenant_id: str) -> ChainVerificationResult:
     """Verify `tenant_id`'s full hash chain in `chain_seq` order."""
     rows = (

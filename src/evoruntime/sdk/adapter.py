@@ -26,6 +26,7 @@ beats a background rejection the agent author never sees.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import threading
@@ -53,7 +54,12 @@ from evoruntime.sdk.journal import (
     recover,
 )
 from evoruntime.sdk.records import ZERO_COST, Details, PendingEvent, TraceContext
-from evoruntime.sdk.transport import HttpIngestTransport, IngestTransport
+from evoruntime.sdk.transport import (
+    HttpIngestTransport,
+    HttpPayloadTransport,
+    IngestTransport,
+    PayloadTransport,
+)
 from evoruntime.security.identities import WorkloadIdentity, WorkloadRole
 
 logger = logging.getLogger(__name__)
@@ -194,6 +200,41 @@ class Trace:
         """
         return self._emit(EVENT_OUTCOME_CLAIMED, details={"claimed_success": success})
 
+    def register_payload(
+        self,
+        content: bytes,
+        *,
+        classification: DataClassification = DataClassification.INTERNAL,
+        kind: str = "payload",
+    ) -> str:
+        """Store payload bytes and record their digest in this trace (H2).
+
+        The digest-emission contract for a fixture coding agent (H1 composes
+        against this, so it is fixed)::
+
+            digest = trace.register_payload(patch_bytes,
+                                            classification=DataClassification.CONFIDENTIAL)
+            trace.tool_call(name="repo_patch", args_digest=digest(1),
+                            result_digest=digest)      # tool output content
+            # or, for loaded content (issue text, skill packages):
+            trace.artifact_loaded(digest=digest, kind="issue")
+
+        The bytes go to the evaluation plane's payload store synchronously
+        (see `Adapter.upload_payload` for why this one call blocks); the
+        digest is then recorded in this trace via `artifact_loaded`, which
+        also lands it in the envelope's `artifact_digests`. Returns the
+        `sha256:...` digest the payload is addressable by — the same value
+        the server computed, so the trace and the store cannot drift.
+
+        Raises `PayloadUploadError` if the bytes could not be stored; in
+        that case nothing is recorded in the trace, so a digest is never
+        emitted for content that never landed.
+        """
+        digest = f"sha256:{hashlib.sha256(content).hexdigest()}"
+        self._adapter.upload_payload(content, classification=classification)
+        self.artifact_loaded(digest=digest, kind=kind)
+        return digest
+
     def __enter__(self) -> Trace:
         self._emit(EVENT_TRACE_STARTED, details={})
         return self
@@ -261,6 +302,7 @@ class Adapter:
         journal_fsync_max_events: int = DEFAULT_FSYNC_MAX_EVENTS,
         journal_fsync_interval_s: float = DEFAULT_FSYNC_INTERVAL_S,
         transport: IngestTransport | None = None,
+        payload_transport: PayloadTransport | None = None,
         identity: WorkloadIdentity | None = None,
         recover_on_start: bool = True,
     ) -> None:
@@ -286,6 +328,9 @@ class Adapter:
             role=WorkloadRole.CANDIDATE_RUNNER, subject=agent_id
         )
         self._transport = transport or HttpIngestTransport(
+            endpoint, tenant_id=tenant_id, identity=self._identity
+        )
+        self._payload_transport = payload_transport or HttpPayloadTransport(
             endpoint, tenant_id=tenant_id, identity=self._identity
         )
 
@@ -362,6 +407,23 @@ class Adapter:
         """Queue an event. Never blocks on I/O; returns False if dropped."""
         return self._buffer.offer(event)
 
+    def upload_payload(self, content: bytes, *, classification: DataClassification) -> None:
+        """Store payload bytes synchronously (H2 payload-registration path).
+
+        This is the one blocking call in the SDK, and deliberately so: the
+        caller needs the bytes durable before it records the digest they
+        hash to — a digest recorded in a trace event whose content never
+        landed would be a dangling reference, and the whole point of the
+        digest chain is that it is constructible. Event emission stays
+        non-blocking; this does not.
+
+        Raises `PayloadUploadError` on failure; the agent decides whether to
+        retry, fail the tool call, or continue without the payload.
+        """
+        if self._closed:
+            raise RuntimeError("adapter is closed")
+        self._payload_transport.upload(content, classification=classification)
+
     def flush(self, timeout_s: float = DEFAULT_CLOSE_TIMEOUT_S) -> bool:
         """Deliver everything queued, returning False if it could not within
         ``timeout_s``."""
@@ -383,6 +445,7 @@ class Adapter:
         if self._journal is not None:
             self._journal.close()
         self._transport.close()
+        self._payload_transport.close()
 
     def __enter__(self) -> Adapter:
         return self

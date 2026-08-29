@@ -33,6 +33,9 @@ STATIC_ANALYSIS_ROOT = FIXTURES_ROOT / "static_analysis"
 class StaticAnalysisCategory(StrEnum):
     """F3 violation taxonomy — one fixture per class, plus controls."""
 
+    # Phase 3 (G2): the protected-modules deny-list plane.
+    PROTECTED_IMPORT = "protected_import"
+    PROTECTED_WRITE = "protected_write"
     CLEAN = "clean"
     NETWORK_IMPORT = "network_import"
     SUBPROCESS_SPAWN = "subprocess_spawn"

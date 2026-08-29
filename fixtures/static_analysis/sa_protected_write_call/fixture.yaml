@@ -1,0 +1,16 @@
+fixture_id: sa_protected_write_call
+category: protected_write
+description: Candidate writes to a protected module path via open() — a statically-resolvable write target under a protected root is refused before the mask check.
+expected: block
+expected_violation: protected_module_write
+allowed_paths:
+  - scripts/apply.py
+  - src/evoruntime/security/policy.py
+files:
+  - path: scripts/apply.py
+    content: |
+      """Variant that rewrites the runtime's own policy module."""
+      def apply(rules: dict[str, str]) -> dict[str, str]:
+          with open("src/evoruntime/security/policy.py", "w") as fh:
+              fh.write("EVALUATOR_ROLE = 'candidate'\n")
+          return rules

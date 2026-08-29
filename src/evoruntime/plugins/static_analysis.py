@@ -43,6 +43,7 @@ from typing import Any, Protocol
 from pydantic import Field
 
 from evoruntime.core.schemas import EvoRuntimeBaseModel
+from evoruntime.security.protected_modules import ProtectedModulesDocument
 
 ANALYSIS_SCHEMA_ID = "evoruntime.analysis.report/v1"
 """Schema id for the canonical verdict bytes a digest/signature covers."""
@@ -70,6 +71,8 @@ class AnalysisViolationCode(StrEnum):
     MASK_PATH_WRITE = "mask_path_write"
     UNPARSEABLE_SOURCE = "unparseable_source"
     OPAQUE_PATH_WRITE = "opaque_path_write"
+    PROTECTED_MODULE_IMPORT = "protected_module_import"
+    PROTECTED_MODULE_WRITE = "protected_module_write"
 
 
 #: Module roots whose import means the candidate wants network egress.
@@ -198,10 +201,11 @@ def analyze_files(
     masks: tuple[MaskLike, ...] = (),
     artifact_type: str = "",
     candidate_digest: str = "",
+    protected_modules: ProtectedModulesDocument | None = None,
 ) -> StaticAnalysisReport:
     """Statically analyze a candidate's file payloads against the mutation masks.
 
-    Pure: same inputs, same verdict, no side effects. Two planes are checked:
+    Pure: same inputs, same verdict, no side effects. Three planes are checked:
 
     - **Mask awareness** — every file path must sit inside some mask's
       allowed paths, and every statically-resolvable write target inside
@@ -209,15 +213,27 @@ def analyze_files(
       ``MASK_PATH_WRITE`` blocker; a write whose target cannot be resolved
       statically is an ``OPAQUE_PATH_WRITE`` warning (the limit of static
       analysis, recorded rather than hidden).
+    - **Protected modules** (Phase 3, G2) — a file path or write target
+      that maps under a protected module root is a
+      ``PROTECTED_MODULE_WRITE`` blocker, and an import of a protected
+      module is a ``PROTECTED_MODULE_IMPORT`` blocker — both regardless
+      of what the mutation mask allows, because the deny-list bounds the
+      mask, not the other way around. ``protected_modules=None`` applies
+      the shipped default deny-list; a scaffold-mutation campaign pins
+      its own signed document here.
     - **Source scanning** — Python files are parsed and their imports and
       calls checked against the taxonomy. Source that does not parse is
       itself a blocker: code the gate cannot analyze is code the runtime
       does not run.
 
-    Non-Python files get the mask check only — their content is not
-    executable Python, so import/call scanning does not apply.
+    Non-Python files get the mask and protected-path checks only — their
+    content is not executable Python, so import/call scanning does not
+    apply.
     """
     allowed = frozenset(p for mask in masks for p in mask.allowed_paths)
+    protected = (
+        protected_modules if protected_modules is not None else ProtectedModulesDocument.default()
+    )
     violations: list[AnalysisViolation] = []
     for index, entry in enumerate(files):
         path = entry.get("path") if isinstance(entry, dict) else None
@@ -233,13 +249,44 @@ def analyze_files(
             continue
         if path not in allowed:
             violations.append(_mask_violation(path, allowed))
+        protected_root = protected.covers_path(path)
+        if protected_root is not None:
+            violations.append(
+                _protected_write_violation(
+                    path=path,
+                    root=protected_root,
+                    protected=protected,
+                    detail=(
+                        f"candidate carries {path!r}, which maps under the protected "
+                        f"module {protected_root} — the deny-list bounds the mutation "
+                        "mask, not the other way around"
+                    ),
+                )
+            )
         content = entry.get("content")
         if isinstance(content, str) and path.endswith(".py"):
-            violations.extend(_scan_source(path, content, allowed))
+            violations.extend(_scan_source(path, content, allowed, protected))
     return StaticAnalysisReport(
         candidate_digest=candidate_digest,
         artifact_type=artifact_type,
         violations=tuple(violations),
+    )
+
+
+def _protected_write_violation(
+    *,
+    path: str,
+    root: str,
+    protected: ProtectedModulesDocument,
+    detail: str,
+    line: int = 0,
+) -> AnalysisViolation:
+    return AnalysisViolation(
+        code=AnalysisViolationCode.PROTECTED_MODULE_WRITE,
+        severity=Severity.BLOCKER,
+        path=path,
+        detail=f"{detail} ({protected.reason_for(root)})",
+        line=line,
     )
 
 
@@ -256,7 +303,9 @@ def _mask_violation(path: str, allowed: frozenset[str]) -> AnalysisViolation:
     )
 
 
-def _scan_source(path: str, source: str, allowed: frozenset[str]) -> list[AnalysisViolation]:
+def _scan_source(
+    path: str, source: str, allowed: frozenset[str], protected: ProtectedModulesDocument
+) -> list[AnalysisViolation]:
     """Parse one Python file and run the import/call scanners over its AST."""
     try:
         tree = ast.parse(source)
@@ -273,9 +322,9 @@ def _scan_source(path: str, source: str, allowed: frozenset[str]) -> list[Analys
     violations: list[AnalysisViolation] = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
-            violations.extend(_check_import(path, node))
+            violations.extend(_check_import(path, node, protected))
         elif isinstance(node, ast.Call):
-            violations.extend(_check_call(path, node, allowed))
+            violations.extend(_check_call(path, node, allowed, protected))
     return violations
 
 
@@ -283,7 +332,9 @@ def _module_root(name: str | None) -> str:
     return (name or "").split(".")[0]
 
 
-def _check_import(path: str, node: ast.Import | ast.ImportFrom) -> list[AnalysisViolation]:
+def _check_import(
+    path: str, node: ast.Import | ast.ImportFrom, protected: ProtectedModulesDocument
+) -> list[AnalysisViolation]:
     violations: list[AnalysisViolation] = []
     names: list[str] = []
     if isinstance(node, ast.Import):
@@ -293,7 +344,22 @@ def _check_import(path: str, node: ast.Import | ast.ImportFrom) -> list[Analysis
     for name in names:
         root = _module_root(name)
         line = node.lineno
-        if root in _NETWORK_MODULE_ROOTS:
+        protected_root = protected.covers(name)
+        if protected_root is not None:
+            violations.append(
+                AnalysisViolation(
+                    code=AnalysisViolationCode.PROTECTED_MODULE_IMPORT,
+                    severity=Severity.BLOCKER,
+                    path=path,
+                    detail=(
+                        f"imports {name!r} — {protected_root} is a protected module "
+                        f"({protected.reason_for(protected_root)}); candidates never "
+                        "import the runtime's protected planes"
+                    ),
+                    line=line,
+                )
+            )
+        elif root in _NETWORK_MODULE_ROOTS:
             violations.append(
                 AnalysisViolation(
                     code=AnalysisViolationCode.NETWORK_IMPORT,
@@ -316,17 +382,23 @@ def _check_import(path: str, node: ast.Import | ast.ImportFrom) -> list[Analysis
     return violations
 
 
-def _check_call(path: str, node: ast.Call, allowed: frozenset[str]) -> list[AnalysisViolation]:
+def _check_call(
+    path: str, node: ast.Call, allowed: frozenset[str], protected: ProtectedModulesDocument
+) -> list[AnalysisViolation]:
     target = node.func
     if isinstance(target, ast.Name):
-        return _check_named_call(path, target.id, node, allowed)
+        return _check_named_call(path, target.id, node, allowed, protected)
     if isinstance(target, ast.Attribute):
-        return _check_attribute_call(path, target, node, allowed)
+        return _check_attribute_call(path, target, node, allowed, protected)
     return []
 
 
 def _check_named_call(
-    path: str, name: str, node: ast.Call, allowed: frozenset[str]
+    path: str,
+    name: str,
+    node: ast.Call,
+    allowed: frozenset[str],
+    protected: ProtectedModulesDocument,
 ) -> list[AnalysisViolation]:
     if name in _DYNAMIC_BUILTINS:
         return [
@@ -339,12 +411,16 @@ def _check_named_call(
             )
         ]
     if name == "open":
-        return _check_open_call(path, node, allowed)
+        return _check_open_call(path, node, allowed, protected)
     return []
 
 
 def _check_attribute_call(
-    path: str, attr: ast.Attribute, node: ast.Call, allowed: frozenset[str]
+    path: str,
+    attr: ast.Attribute,
+    node: ast.Call,
+    allowed: frozenset[str],
+    protected: ProtectedModulesDocument,
 ) -> list[AnalysisViolation]:
     dotted = _dotted_name(attr)
     root, _, leaf = dotted.rpartition(".")
@@ -370,19 +446,25 @@ def _check_attribute_call(
         ]
     fs_roots = ("os", "shutil", "pathlib")
     if leaf in _FS_MUTATING_ATTRS and (root.endswith("Path") or root in fs_roots):
-        return _check_write_target(path, dotted, node, allowed)
+        return _check_write_target(path, dotted, node, allowed, protected)
     return []
 
 
-def _check_open_call(path: str, node: ast.Call, allowed: frozenset[str]) -> list[AnalysisViolation]:
+def _check_open_call(
+    path: str, node: ast.Call, allowed: frozenset[str], protected: ProtectedModulesDocument
+) -> list[AnalysisViolation]:
     mode = _literal_str(node.args[1]) if len(node.args) > 1 else "r"
     if mode is None or not (set(mode) & _WRITE_MODE_CHARS):
         return []
-    return _check_write_target(path, "open", node, allowed)
+    return _check_write_target(path, "open", node, allowed, protected)
 
 
 def _check_write_target(
-    path: str, call: str, node: ast.Call, allowed: frozenset[str]
+    path: str,
+    call: str,
+    node: ast.Call,
+    allowed: frozenset[str],
+    protected: ProtectedModulesDocument,
 ) -> list[AnalysisViolation]:
     if not node.args:
         return []
@@ -396,6 +478,21 @@ def _check_write_target(
                 detail=(
                     f"{call}() writes to a value static analysis cannot resolve — "
                     "recorded, not proven safe"
+                ),
+                line=node.lineno,
+            )
+        ]
+    protected_root = protected.covers_path(target)
+    if protected_root is not None:
+        return [
+            _protected_write_violation(
+                path=path,
+                root=protected_root,
+                protected=protected,
+                detail=(
+                    f"{call}() writes to {target!r}, which maps under the protected "
+                    f"module {protected_root} — the deny-list bounds the mutation "
+                    "mask, not the other way around"
                 ),
                 line=node.lineno,
             )

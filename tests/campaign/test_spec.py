@@ -129,6 +129,39 @@ class TestSpecValidation:
                 mutable_artifact=replace(spec.mutable_artifact, paths=("../../secrets",)),
             )
 
+    def _spec_with_mask_paths(self, *paths: str) -> CampaignSpec:
+        """The fixture spec re-authored with one mask path list."""
+        raw = make_spec_mapping()
+        raw["mutable_artifact"]["paths"] = list(paths)  # type: ignore[index]
+        return CampaignSpec.from_mapping(raw)  # type: ignore[arg-type]
+
+    def test_protected_mask_path_is_refused_at_spec_construction(self) -> None:
+        """Phase 3 (G2): a mask path under a protected root fails before search."""
+        with pytest.raises(InvalidCampaignSpecError, match="protected module"):
+            self._spec_with_mask_paths("src/evoruntime/security/policy.py")
+
+    def test_protected_mask_path_refusal_names_the_root_and_reason(self) -> None:
+        with pytest.raises(InvalidCampaignSpecError, match="evoruntime.security"):
+            self._spec_with_mask_paths("src/evoruntime/security/egress.py")
+
+    def test_every_protected_plane_is_refused_as_a_mask_path(self) -> None:
+        """An explicit attempt to mutate an evaluator module is proven refused."""
+        for protected_path in (
+            "src/evoruntime/selection/policy.py",
+            "src/evoruntime/release/manifest.py",
+            "src/evoruntime/sandbox/profiles.py",
+            "src/evoruntime/dlp/redactor.py",
+            "src/evoruntime/datasets/ledger.py",
+            "src/evoruntime/sdk/attestation.py",
+        ):
+            with pytest.raises(InvalidCampaignSpecError, match="protected module"):
+                self._spec_with_mask_paths(protected_path)
+
+    def test_sibling_prefix_paths_are_still_allowed(self) -> None:
+        """The deny-list bounds protected roots, not look-alike siblings."""
+        spec = self._spec_with_mask_paths("prompts/system.md", "src/evoruntime/securityx/policy.py")
+        assert "src/evoruntime/securityx/policy.py" in spec.mutable_artifact.paths
+
     def test_unknown_budget_profile_is_a_construction_error(self) -> None:
         raw = make_spec_mapping()
         raw["budgets"] = {  # type: ignore[assignment]

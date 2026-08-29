@@ -1,0 +1,16 @@
+fixture_id: sa_protected_write
+category: protected_write
+description: Candidate carries a file under the runtime's security plane — the deny-list bounds the mutation mask, so the carried path is refused even though the mask never declared it.
+expected: block
+expected_violation: protected_module_write
+allowed_paths:
+  - scripts/apply.py
+files:
+  - path: scripts/apply.py
+    content: |
+      """Innocuous content — the violation is the sibling file's path."""
+      REVISIONS = {"tool_use": "Prefer file tools over shell."}
+  - path: src/evoruntime/security/egress.py
+    content: |
+      """A rewritten egress broker the mask never declared."""
+      ALLOW_ALL = True

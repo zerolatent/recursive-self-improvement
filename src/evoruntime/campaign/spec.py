@@ -49,6 +49,7 @@ from evoruntime.eval.errors import UnknownBudgetProfileError
 from evoruntime.eval.experiment import Arm, ArmKind
 from evoruntime.eval.statistics import MIN_BOOTSTRAP_ITERATIONS, MultiplicityMethod
 from evoruntime.plugins.manifest import PluginArtifactType
+from evoruntime.security.protected_modules import ProtectedModulesDocument
 from evoruntime.security.signing import DetachedSignature, sign, verify
 
 SUPPORTED_SPEC_VERSION = 2
@@ -141,6 +142,20 @@ class MutableArtifact:
             )
         for path in self.paths:
             _validate_mask_path(path)
+        # Phase 3 (G2): the protected-modules deny-list bounds the mutation
+        # mask at spec construction — fail before search, not at the gate.
+        # A mask that names a path under a protected root is not a narrower
+        # campaign, it is a preregistered attempt to mutate a protected plane.
+        protected = ProtectedModulesDocument.default()
+        for path in self.paths:
+            protected_root = protected.covers_path(path)
+            if protected_root is not None:
+                raise InvalidCampaignSpecError(
+                    f"mutable path {path!r} maps under the protected module "
+                    f"{protected_root} ({protected.reason_for(protected_root)}) — "
+                    "the protected-modules deny-list bounds the mutation mask, "
+                    "and a spec that names a protected path is refused before search"
+                )
 
     def to_canonical_dict(self) -> dict[str, Any]:
         """Canonical JSON form of this artifact binding."""

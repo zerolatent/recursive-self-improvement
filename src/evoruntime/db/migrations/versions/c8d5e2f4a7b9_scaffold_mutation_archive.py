@@ -1,7 +1,7 @@
 """scaffold_mutation_archive — rebuildable mutation-archive projection (G9)
 
 Revision ID: c8d5e2f4a7b9
-Revises: b5c7e2a9d4f1
+Revises: d9c3e7a1f5b8
 Create Date: 2026-08-29
 
 Phase 3 deliverable G9: the harness-mutator's mutation archive. A typed
@@ -27,7 +27,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "c8d5e2f4a7b9"
-down_revision: str | Sequence[str] | None = "b5c7e2a9d4f1"
+down_revision: str | Sequence[str] | None = "d9c3e7a1f5b8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

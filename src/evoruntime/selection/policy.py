@@ -205,7 +205,14 @@ class PromotionEvidence:
 
     claimed_transfer_scope: tuple[str, ...] = ()
     evaluated_transfer_scope: tuple[str, ...] = ()
-    """The scopes the holdout evaluation actually covered."""
+    """The scopes the evaluation actually covered.
+
+    Since F7 (FR-103) this is real multi-family data when a transfer
+    suite ran: `evoruntime.eval.suites.evaluated_transfer_scopes` derives
+    it from the suite's per-family paired results, and a family whose
+    evaluation failed contributes no scope — the condition below still
+    fails closed on the gap.
+    """
 
     preregistered_non_inferiority: bool = False
     """True when the campaign preregistered the cost-reduction path."""

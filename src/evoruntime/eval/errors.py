@@ -122,6 +122,16 @@ class BackendCredentialError(EvalError):
     """
 
 
+class SuiteDefinitionError(EvalError):
+    """A transfer suite was declared or wired in a way the runner cannot run.
+
+    Raised before any family executes: a suite that would burn compute on
+    three families and then discover the fourth has no task source has no
+    defensible partial result — the evaluated set it would report is an
+    artifact of wiring order, not of evidence.
+    """
+
+
 class StatisticsError(EvalError):
     """A statistical routine was handed data it cannot draw a conclusion from."""
 
@@ -136,6 +146,7 @@ __all__ = [
     "ScriptedAgentError",
     "SealedPartitionError",
     "StatisticsError",
+    "SuiteDefinitionError",
     "TaskSourceError",
     "UnknownBudgetProfileError",
 ]

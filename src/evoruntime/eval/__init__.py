@@ -89,6 +89,7 @@ from evoruntime.eval.errors import (
     ScriptedAgentError,
     SealedPartitionError,
     StatisticsError,
+    SuiteDefinitionError,
     TaskSourceError,
     UnknownBudgetProfileError,
 )
@@ -115,6 +116,15 @@ from evoruntime.eval.statistics import (
     holm_adjusted_p_values,
     paired_bootstrap,
     per_comparison_alpha,
+)
+from evoruntime.eval.suites import (
+    FamilyOutcome,
+    SuiteFamily,
+    TransferFamilyKind,
+    TransferSuite,
+    TransferSuiteResult,
+    evaluated_transfer_scopes,
+    run_transfer_suite,
 )
 from evoruntime.eval.tasks import (
     AttemptRecord,
@@ -182,6 +192,7 @@ __all__ = [
     "SecretsProvider",
     "StatisticsError",
     "StopReason",
+    "SuiteDefinitionError",
     "StageEvaluator",
     "StageOutcome",
     "StageRun",
@@ -190,6 +201,13 @@ __all__ = [
     "TaskSource",
     "TaskSourceError",
     "UnknownBudgetProfileError",
+    "FamilyOutcome",
+    "SuiteFamily",
+    "TransferFamilyKind",
+    "TransferSuite",
+    "TransferSuiteResult",
+    "evaluated_transfer_scopes",
+    "run_transfer_suite",
     "VarianceReport",
     "Verdict",
     "derive_seed",

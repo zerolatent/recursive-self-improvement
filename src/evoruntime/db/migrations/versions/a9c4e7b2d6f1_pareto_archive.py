@@ -1,7 +1,7 @@
 """pareto_archive projection (Phase 4, H5)
 
 Revision ID: a9c4e7b2d6f1
-Revises: e1a2b3c4d5e6
+Revises: a4b7c2d9e1f3
 Create Date: 2026-08-29
 
 A rebuildable projection over the append-only core (proposal records x
@@ -20,7 +20,7 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
 
 revision: str = "a9c4e7b2d6f1"
-down_revision: str | Sequence[str] | None = "e1a2b3c4d5e6"
+down_revision: str | Sequence[str] | None = "a4b7c2d9e1f3"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

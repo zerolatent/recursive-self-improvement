@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any, Protocol
 
@@ -55,6 +55,7 @@ from evoruntime.eval.budgets import resolve_budget_profile
 from evoruntime.eval.cascade import EvaluatorCostClass
 from evoruntime.eval.errors import UnknownBudgetProfileError
 from evoruntime.eval.experiment import Arm, ArmKind
+from evoruntime.eval.power import DEFAULT_BASELINE_SUCCESS_RATE, required_sample_size
 from evoruntime.eval.statistics import MIN_BOOTSTRAP_ITERATIONS, MultiplicityMethod
 from evoruntime.plugins.manifest import PluginArtifactType
 from evoruntime.security.protected_modules import ProtectedModulesDocument
@@ -683,8 +684,22 @@ class StatisticsPlan:
     campaign may ablate, pinned at spec time. An ABLATION arm naming a
     component outside this set is refused — the family is a preregistration,
     and one that could grow after seeing the deltas would not be one."""
+    required_sample_size: int | None = None
+    """The powered task count per arm (H10), computed by
+    :func:`pin_powered_sample_size` from the plan's alpha plus the
+    campaign's power and minimum-detectable-effect targets, and pinned at
+    plan time — a campaign budgeted from this number is powered by
+    construction, not discovered underpowered after the runs are spent.
+    Optional: absent on every pre-H10 plan."""
 
     def __post_init__(self) -> None:
+        if self.required_sample_size is not None and (
+            isinstance(self.required_sample_size, bool) or self.required_sample_size < 1
+        ):
+            raise InvalidCampaignSpecError(
+                f"required_sample_size must be a positive integer, got "
+                f"{self.required_sample_size!r}"
+            )
         object.__setattr__(self, "ablation_family", tuple(self.ablation_family))
         for component_id in self.ablation_family:
             if not component_id or component_id != component_id.strip():
@@ -712,7 +727,39 @@ class StatisticsPlan:
             "bootstrap_iterations": self.bootstrap_iterations,
             "bootstrap_seed": self.bootstrap_seed,
             "ablation_family": list(self.ablation_family),
+            # H10: omit-when-unset, same convention as the arm-level
+            # component_id/editor_ref fields — pre-H10 plans keep their
+            # canonical bytes (and so their digest) unchanged.
+            **(
+                {"required_sample_size": self.required_sample_size}
+                if self.required_sample_size is not None
+                else {}
+            ),
         }
+
+
+def pin_powered_sample_size(
+    statistics: StatisticsPlan,
+    *,
+    power: float,
+    minimum_detectable_effect: float,
+    baseline_success_rate: float = DEFAULT_BASELINE_SUCCESS_RATE,
+) -> StatisticsPlan:
+    """Pin the powered task count into a statistics plan (H10).
+
+    Called at plan time, before search: the plan's alpha is the error rate
+    the whole preregistered family is judged at, so the sample size is
+    computed against it — a plan pinned this way budgets a campaign that is
+    powered for the effect it claims to look for. Pure: returns a new plan
+    and leaves the input untouched.
+    """
+    analysis = required_sample_size(
+        alpha=statistics.alpha,
+        power=power,
+        minimum_detectable_effect=minimum_detectable_effect,
+        baseline_success_rate=baseline_success_rate,
+    )
+    return replace(statistics, required_sample_size=analysis.required_tasks)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1227,6 +1274,13 @@ class CampaignSpec:
                     ablation_family=tuple(
                         _require_str(component, "ablation family component")
                         for component in raw["statistics"].get("ablation_family", ())
+                    ),
+                    required_sample_size=(
+                        _require_int(
+                            raw["statistics"]["required_sample_size"], "required_sample_size"
+                        )
+                        if raw["statistics"].get("required_sample_size") is not None
+                        else None
                     ),
                 ),
                 stopping_rules=StoppingRules(

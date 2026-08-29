@@ -23,10 +23,12 @@ from evoruntime.campaign.spec import (
     EvaluatorBinding,
     MutableArtifact,
     MutableArtifactSet,
+    MutationClassBinding,
     pin_and_sign,
 )
+from evoruntime.core.isolation import IsolationTier
 from evoruntime.eval.cascade import EvaluatorCostClass
-from tests.campaign.conftest import make_spec, make_spec_mapping
+from tests.campaign.conftest import SPEC_DIGEST, make_spec, make_spec_mapping
 
 
 def mutated(**changes: object) -> CampaignSpec:
@@ -294,7 +296,7 @@ class TestMutableArtifactSetV2:
 class TestV1MigrationWindow:
     def test_v1_spec_parses_during_the_window_as_a_single_member_set(self) -> None:
         spec = make_spec()
-        assert spec.schema_version == 2  # upgraded at parse time
+        assert spec.schema_version == 3  # upgraded at parse time
         assert len(spec.mutable_artifacts.artifacts) == 1
         assert spec.mutable_artifacts.artifacts[0].artifact_type == (spec.incumbent.artifact_type)
 
@@ -324,13 +326,254 @@ class TestV1MigrationWindow:
 
         monkeypatch.setattr(spec_module, "date", FrozenDate)
         spec = CampaignSpec.from_mapping(make_spec_mapping())  # window's last day
-        assert spec.schema_version == 2
+        assert spec.schema_version == 3
 
     def test_unsupported_schema_version_is_refused(self) -> None:
         raw = make_spec_mapping()
-        raw["schema_version"] = 3
+        raw["schema_version"] = 999
         with pytest.raises(InvalidCampaignSpecError, match="schema_version"):
             CampaignSpec.from_mapping(raw)
+
+
+# ---------------------------------------------------------------------------
+# Spec v3: scaffold mutation surface, environment, pinned mutation classes (G3)
+# ---------------------------------------------------------------------------
+
+
+def make_v3_mapping() -> dict[str, object]:
+    """The fixture spec re-authored as a v3 document (no scaffold surface)."""
+    raw = make_spec_mapping()
+    raw["schema_version"] = 3
+    raw.pop("mutable_artifact", None)
+    raw["mutable_artifacts"] = [
+        {"artifact_type": "prompt_bundle", "paths": ["prompts/system.md"]},
+    ]
+    return raw
+
+
+def make_scaffold_mapping() -> dict[str, object]:
+    """A valid v3 scaffold-mutable spec: research environment, pinned classes."""
+    raw = make_v3_mapping()
+    raw["incumbent"] = {
+        "release_manifest_digest": SPEC_DIGEST,
+        "artifact_type": "scaffold",
+    }
+    raw["mutable_artifacts"] = [
+        {"artifact_type": "scaffold", "paths": ["src/evoruntime/campaign/spec.py"]},
+    ]
+    raw["environment"] = "research"
+    raw["mutation_classes"] = [
+        {
+            "class_id": "prompt_module_edit",
+            "risk_dossier_digest": "sha256:" + "e" * 64,
+            "max_tier": "executable",
+        },
+        {
+            "class_id": "control_flow_change",
+            "risk_dossier_digest": "sha256:" + "f" * 64,
+            "max_tier": "highest",
+        },
+    ]
+    return raw
+
+
+class TestSpecV3ScaffoldMutationSurface:
+    def test_valid_scaffold_spec_parses_with_pinned_classes(self) -> None:
+        spec = CampaignSpec.from_mapping(make_scaffold_mapping())
+        assert spec.environment == "research"
+        assert [binding.class_id for binding in spec.mutation_classes] == [
+            "prompt_module_edit",
+            "control_flow_change",
+        ]
+        assert spec.mutation_classes[0].max_tier is IsolationTier.EXECUTABLE
+        assert spec.mutation_classes[1].max_tier is IsolationTier.HIGHEST
+
+    def test_scaffold_spec_without_environment_is_refused_at_parse(self) -> None:
+        raw = make_scaffold_mapping()
+        del raw["environment"]
+        with pytest.raises(InvalidCampaignSpecError, match="environment: research"):
+            CampaignSpec.from_mapping(raw)
+
+    def test_scaffold_spec_without_pinned_mutation_classes_is_refused_at_parse(self) -> None:
+        raw = make_scaffold_mapping()
+        del raw["mutation_classes"]
+        with pytest.raises(InvalidCampaignSpecError, match="mutation_classes"):
+            CampaignSpec.from_mapping(raw)
+
+    def test_scaffold_spec_with_an_empty_mutation_classes_section_is_refused(self) -> None:
+        raw = make_scaffold_mapping()
+        raw["mutation_classes"] = []
+        with pytest.raises(InvalidCampaignSpecError, match="mutation_classes"):
+            CampaignSpec.from_mapping(raw)
+
+    def test_environment_other_than_research_is_refused(self) -> None:
+        raw = make_scaffold_mapping()
+        raw["environment"] = "production"
+        with pytest.raises(InvalidCampaignSpecError, match="environment"):
+            CampaignSpec.from_mapping(raw)
+
+    def test_non_scaffold_spec_does_not_require_environment_or_classes(self) -> None:
+        """The scaffold gate is scoped to scaffold-mutable sets: a prompt
+        campaign parses without either v3 field, exactly as it did in v2."""
+        spec = CampaignSpec.from_mapping(make_v3_mapping())
+        assert spec.environment is None
+        assert spec.mutation_classes == ()
+
+    def test_mutation_class_dossier_digest_must_be_a_sha256(self) -> None:
+        raw = make_scaffold_mapping()
+        raw["mutation_classes"] = [
+            {
+                "class_id": "prompt_module_edit",
+                "risk_dossier_digest": "dossier-v3-final",
+                "max_tier": "executable",
+            }
+        ]
+        with pytest.raises(InvalidCampaignSpecError, match="risk_dossier_digest"):
+            CampaignSpec.from_mapping(raw)
+
+    def test_mutation_class_max_tier_must_be_a_known_isolation_tier(self) -> None:
+        raw = make_scaffold_mapping()
+        raw["mutation_classes"] = [
+            {
+                "class_id": "prompt_module_edit",
+                "risk_dossier_digest": "sha256:" + "e" * 64,
+                "max_tier": "tier-9",
+            }
+        ]
+        with pytest.raises(InvalidCampaignSpecError, match="max_tier"):
+            CampaignSpec.from_mapping(raw)
+
+    def test_duplicate_mutation_class_ids_are_refused(self) -> None:
+        raw = make_scaffold_mapping()
+        raw["mutation_classes"] = [
+            {
+                "class_id": "prompt_module_edit",
+                "risk_dossier_digest": "sha256:" + "e" * 64,
+                "max_tier": "executable",
+            },
+            {
+                "class_id": "prompt_module_edit",
+                "risk_dossier_digest": "sha256:" + "f" * 64,
+                "max_tier": "highest",
+            },
+        ]
+        with pytest.raises(InvalidCampaignSpecError, match="duplicate class_id"):
+            CampaignSpec.from_mapping(raw)
+
+
+class TestV2MigrationWindow:
+    def test_v2_spec_parses_during_the_window_and_upgrades_to_v3(self) -> None:
+        raw = make_spec_mapping()
+        raw["schema_version"] = 2
+        raw.pop("mutable_artifact", None)
+        raw["mutable_artifacts"] = [
+            {"artifact_type": "prompt_bundle", "paths": ["prompts/system.md"]},
+        ]
+        spec = CampaignSpec.from_mapping(raw)
+        assert spec.schema_version == 3  # upgraded at parse time
+        assert spec.environment is None  # v2 documents carry no environment claim
+        assert spec.mutation_classes == ()
+
+    def test_v2_spec_is_rejected_after_the_migration_window(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import evoruntime.campaign.spec as spec_module
+
+        class FrozenDate(spec_module.date):  # type: ignore[name-defined]
+            @classmethod
+            def today(cls) -> spec_module.date:  # type: ignore[name-defined]
+                return spec_module.date(2026, 10, 29)  # type: ignore[attr-defined]
+
+        monkeypatch.setattr(spec_module, "date", FrozenDate)
+        raw = make_spec_mapping()
+        raw["schema_version"] = 2
+        raw.pop("mutable_artifact", None)
+        raw["mutable_artifacts"] = [
+            {"artifact_type": "prompt_bundle", "paths": ["prompts/system.md"]},
+        ]
+        with pytest.raises(InvalidCampaignSpecError, match="migration window closed"):
+            CampaignSpec.from_mapping(raw)
+
+    def test_v2_spec_is_still_accepted_on_the_windows_last_day(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import evoruntime.campaign.spec as spec_module
+
+        class FrozenDate(spec_module.date):  # type: ignore[name-defined]
+            @classmethod
+            def today(cls) -> spec_module.date:  # type: ignore[name-defined]
+                return spec_module.date(2026, 10, 28)  # type: ignore[attr-defined]
+
+        monkeypatch.setattr(spec_module, "date", FrozenDate)
+        raw = make_spec_mapping()
+        raw["schema_version"] = 2
+        raw.pop("mutable_artifact", None)
+        raw["mutable_artifacts"] = [
+            {"artifact_type": "prompt_bundle", "paths": ["prompts/system.md"]},
+        ]
+        spec = CampaignSpec.from_mapping(raw)  # window's last day
+        assert spec.schema_version == 3
+
+    def test_v2_and_equivalent_v3_documents_pin_to_the_same_digest(self) -> None:
+        """The v2→v3 upgrade is shape-only: the upgraded v2 document and
+        the same document re-authored as v3 are the same spec, so they pin
+        to the same digest and the same signature verifies both."""
+        v2_raw = make_spec_mapping()
+        v2_raw["schema_version"] = 2
+        v2_raw.pop("mutable_artifact", None)
+        v2_raw["mutable_artifacts"] = [
+            {"artifact_type": "prompt_bundle", "paths": ["prompts/system.md"]},
+        ]
+        # The environment claim is set explicitly on both documents: the
+        # canonical form always serializes it (G3), so the digest binds
+        # the claim — an equivalent pair that *declares* the claim must
+        # upgrade without changing the digest.
+        v2_raw["environment"] = "research"
+        v3_raw = copy.deepcopy(v2_raw)
+        v3_raw["schema_version"] = 3
+        v2_spec = CampaignSpec.from_mapping(v2_raw)
+        v3_spec = CampaignSpec.from_mapping(v3_raw)
+        assert v2_spec.digest == v3_spec.digest
+        assert v2_spec.to_canonical_dict() == v3_spec.to_canonical_dict()
+
+
+class TestPinAndSignV3:
+    def test_pinned_digest_binds_the_environment_claim(self) -> None:
+        """Declaring the environment claim changes the digest — the
+        signature vouches for the environment, not just the surfaces.
+        (Proven on a non-scaffold spec, where the claim is optional: a
+        scaffold spec without it is refused outright.)"""
+        raw = make_v3_mapping()
+        raw["environment"] = "research"
+        claimed = CampaignSpec.from_mapping(raw)
+        unclaimed = CampaignSpec.from_mapping(make_v3_mapping())
+        pinned = pin_and_sign(claimed, Ed25519PrivateKey.generate())
+        repinned = pin_and_sign(unclaimed, Ed25519PrivateKey.generate())
+        assert pinned.digest != repinned.digest
+
+    def test_pinned_digest_binds_the_mutation_classes(self) -> None:
+        """A class whose dossier digest changes is a different
+        preregistration — the signature vouches for every pinned class."""
+        spec = CampaignSpec.from_mapping(make_scaffold_mapping())
+        pinned = pin_and_sign(spec, Ed25519PrivateKey.generate())
+        re_dossiered = replace(
+            spec,
+            mutation_classes=(
+                MutationClassBinding(
+                    class_id="prompt_module_edit",
+                    risk_dossier_digest="sha256:" + "9" * 64,
+                    max_tier=IsolationTier.EXECUTABLE,
+                ),
+                spec.mutation_classes[1],
+            ),
+        )
+        repinned = pin_and_sign(re_dossiered, Ed25519PrivateKey.generate())
+        assert pinned.digest != repinned.digest
+
+    def test_pinned_scaffold_spec_verifies(self) -> None:
+        spec = CampaignSpec.from_mapping(make_scaffold_mapping())
+        pinned = pin_and_sign(spec, Ed25519PrivateKey.generate())
+        assert pinned.verify()
 
 
 class TestPinAndSignV2:

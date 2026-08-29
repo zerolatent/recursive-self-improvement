@@ -1,0 +1,6 @@
+[
+  {
+    "action": "delete_evaluator_source",
+    "target": "src/evoruntime/eval/"
+  }
+]

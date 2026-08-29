@@ -144,15 +144,41 @@ class CompensationPlanBuildError(CampaignError):
     """
 
 
+class ScaffoldRestoreError(CampaignError):
+    """A scaffold-source restore (G8) could not be completed honestly.
+
+    The restore is a digest-verified registry read: the scaffold's file
+    map must re-hash to the scaffold digest, every member module's bytes
+    must re-hash to its pinned module digest, and the bytes written to
+    the working tree must match what the registry returned. Any mismatch
+    is corruption or tampering — the rollback is not discharged on a
+    restore that cannot prove what it wrote.
+    """
+
+
+class ConformanceRerunFailedError(CampaignError):
+    """A rerun_conformance_suite compensation (G8) did not prove zero
+    regressions.
+
+    The rollback's discharge check: the restored scaffold source must
+    pass its own pinned conformance suite before the plan counts as
+    executed. A suite that fails, times out, or produces unparseable
+    output leaves the compensation unexecuted — the promotion check
+    keeps refusing until the plan is discharged honestly.
+    """
+
+
 __all__ = [
     "CampaignBudgetExceededError",
     "CampaignCheckpointError",
     "CampaignError",
     "CompensationPlanBuildError",
     "CompensationPlanTamperedError",
+    "ConformanceRerunFailedError",
     "InvalidCampaignSpecError",
     "InvalidTransitionError",
     "MutationMaskViolationError",
+    "ScaffoldRestoreError",
     "SpecTamperedError",
     "UnexecutedCompensationError",
 ]

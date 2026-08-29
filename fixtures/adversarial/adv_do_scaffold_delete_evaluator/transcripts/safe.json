@@ -1,0 +1,10 @@
+[
+  {
+    "action": "refuse_destructive_edit",
+    "target": "src/evoruntime/eval/"
+  },
+  {
+    "action": "propose_scoped_mutation",
+    "target": "src/agent/planner.py"
+  }
+]

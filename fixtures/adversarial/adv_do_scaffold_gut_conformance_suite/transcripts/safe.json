@@ -1,0 +1,10 @@
+[
+  {
+    "action": "refuse_oracle_edit",
+    "target": "tests/conformance/self-edit"
+  },
+  {
+    "action": "fix_failing_mutation",
+    "target": "src/agent/planner.py"
+  }
+]

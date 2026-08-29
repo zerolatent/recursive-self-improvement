@@ -264,6 +264,35 @@ class CompensationActionSpec:
                     "compensating action"
                 )
             _require_pinned_image(self.hook_image, "compensation hook_image")
+        elif self.action == CompensationActionKind.RERUN_CONFORMANCE_SUITE.value:
+            # G8: the suite this action re-runs is pinned inside the
+            # scaffold's own file map, so the action declares no hook image
+            # of its own — re-declaring one here would create a second pin
+            # that could drift from the oracle the candidate was judged by.
+            if self.hook_image is not None:
+                raise InvalidCampaignSpecError(
+                    "a rerun_conformance_suite action takes no hook_image — the "
+                    "suite pin travels with the scaffold's file map, and a second "
+                    "pin here could disagree with it"
+                )
+            if self.artifact_type != PluginArtifactType.SCAFFOLD.value:
+                raise InvalidCampaignSpecError(
+                    f"a rerun_conformance_suite action targets {self.artifact_type!r}, "
+                    "but only the scaffold class pins a conformance suite — "
+                    "scaffold-specific compensations name the scaffold class"
+                )
+        elif self.action == CompensationActionKind.RESTORE_SCAFFOLD_SOURCE.value:
+            if self.hook_image is not None:
+                raise InvalidCampaignSpecError(
+                    f"compensation action {self.action!r} takes no hook_image — the "
+                    "restore is a digest-verified registry read, not a declared hook"
+                )
+            if self.artifact_type != PluginArtifactType.SCAFFOLD.value:
+                raise InvalidCampaignSpecError(
+                    f"a restore_scaffold_source action targets {self.artifact_type!r}, "
+                    "but only the scaffold class has registry-restorable source — "
+                    "scaffold-specific compensations name the scaffold class"
+                )
         elif self.hook_image is not None:
             raise InvalidCampaignSpecError(
                 f"CAS compensation action {self.action!r} takes no hook_image — "
@@ -289,6 +318,13 @@ class CompensationPlanSection:
     Declared before search like every other pinned section — a rollback
     plan chosen after seeing what broke is not a transaction plan, it is
     an improvisation with a signature.
+
+    One action per artifact class, with one G8 exception: the scaffold
+    rollback is a two-action unit — ``restore_scaffold_source`` followed
+    by ``rerun_conformance_suite`` — because undoing a whole source tree
+    and re-proving the restored tree against its own oracle are two halves
+    of one compensation, and the rerun is only meaningful after the
+    restore.
     """
 
     actions: tuple[CompensationActionSpec, ...]
@@ -302,10 +338,43 @@ class CompensationPlanSection:
             )
         types = [action.artifact_type for action in self.actions]
         duplicates = sorted({t for t in types if types.count(t) > 1})
-        if duplicates:
+        if duplicates and not self._is_scaffold_rollback_pair(duplicates):
             raise InvalidCampaignSpecError(
                 f"duplicate artifact_type in the compensation plan: "
                 f"{', '.join(duplicates)} — one compensating action per artifact"
+            )
+        self._validate_scaffold_rollback_order()
+
+    @staticmethod
+    def _is_scaffold_rollback_pair(duplicates: list[str]) -> bool:
+        """True when the duplicates are exactly the G8 scaffold rollback
+        pair: restore the source, then re-verify the oracle — two actions
+        on one artifact class that compose into a single rollback unit."""
+        return duplicates == [PluginArtifactType.SCAFFOLD.value]
+
+    def _validate_scaffold_rollback_order(self) -> None:
+        """The scaffold rollback pair must be the declared pair, restore
+        first — rerunning the oracle against a tree that has not been
+        restored judges nothing."""
+        scaffold_actions = [
+            action.action
+            for action in self.actions
+            if action.artifact_type == PluginArtifactType.SCAFFOLD.value
+        ]
+        if len(scaffold_actions) < 2:
+            return
+        restore = CompensationActionKind.RESTORE_SCAFFOLD_SOURCE.value
+        rerun = CompensationActionKind.RERUN_CONFORMANCE_SUITE.value
+        if sorted(scaffold_actions) != sorted((restore, rerun)):
+            raise InvalidCampaignSpecError(
+                "the scaffold class carries more than one compensating action — "
+                f"the only allowed pair is {restore!r} followed by {rerun!r}"
+            )
+        if scaffold_actions.index(restore) > scaffold_actions.index(rerun):
+            raise InvalidCampaignSpecError(
+                f"{rerun!r} is declared before {restore!r} — the conformance "
+                "rerun must follow the source restore, or it judges a tree that "
+                "has not been restored yet"
             )
 
     def to_canonical_dict(self) -> dict[str, Any]:

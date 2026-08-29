@@ -94,10 +94,21 @@ def _policy_registry(tenants: Tenants) -> TenantPolicyRegistry:
 
 
 def _scaffold_spec_mapping(environment: str | None = None) -> dict[str, Any]:
-    """A valid spec whose mutable set is scaffold-class."""
+    """A valid spec whose mutable set is scaffold-class.
+
+    G3 requires a scaffold-mutable spec to pin its mutation classes, so
+    the helper carries a minimal valid `mutation_classes` section.
+    """
     mapping = make_campaign_spec_mapping()
     mapping["incumbent"]["artifact_type"] = "scaffold"
     mapping["mutable_artifact"]["artifact_type"] = "scaffold"
+    mapping["mutation_classes"] = [
+        {
+            "class_id": "prompt_module_edit",
+            "risk_dossier_digest": "sha256:" + "a" * 64,
+            "max_tier": "executable",
+        },
+    ]
     if environment is not None:
         mapping["environment"] = environment
     else:
@@ -151,10 +162,15 @@ def test_non_scaffold_spec_constructs_without_environment() -> None:
     assert not spec.has_scaffold_mutable
 
 
-def test_environment_field_is_omitted_from_canonical_form_when_unset() -> None:
-    """Digest stability: a pre-G6 spec pins to its pre-G6 digest."""
+def test_environment_field_is_always_in_the_canonical_form() -> None:
+    """G3 diverges from G6's omit-when-unset convention on purpose: the
+    environment claim is always serialized (null for pre-G6 documents)
+    so the digest binds the claim — a spec whose environment claim
+    changed after pinning no longer verifies."""
     mapping = make_campaign_spec_mapping()
-    assert "environment" not in CampaignSpec.from_mapping(mapping).to_canonical_dict()
+    canonical = CampaignSpec.from_mapping(mapping).to_canonical_dict()
+    assert "environment" in canonical
+    assert canonical["environment"] is None
 
 
 def test_invalid_environment_value_is_refused() -> None:

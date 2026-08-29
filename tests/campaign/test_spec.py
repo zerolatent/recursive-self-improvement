@@ -379,6 +379,9 @@ def make_scaffold_mapping() -> dict[str, object]:
             "max_tier": "highest",
         },
     ]
+    # G7: a scaffold-mutable campaign pins the digest of the tier-4-allowing
+    # seed policy its promotions are governed by.
+    raw["tier4_policy_digest"] = "sha256:" + "a" * 64
     return raw
 
 

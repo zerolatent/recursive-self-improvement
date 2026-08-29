@@ -756,6 +756,17 @@ class CampaignSpec:
     longer verifies. This deliberate divergence from G6's
     omit-when-unset convention is v3 behavior, not an accident.
     """
+    tier4_policy_digest: str | None = None
+    """Digest of the tier-4-allowing seed policy this campaign answers to (G7).
+
+    Required on every scaffold-mutable spec: the promotions of a
+    scaffold-mutation campaign are tier-4 acts, and the policy whose
+    approval defaults admit them is signed policy data
+    (:mod:`evoruntime.tenancy.seed`) whose digest is pinned here — chosen
+    before search begins, like every other part of the preregistration.
+    Refused on non-scaffold specs: a tier-4 pin on a campaign that can
+    never promote at tier 4 governs nothing.
+    """
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "arms", tuple(self.arms))
@@ -779,6 +790,7 @@ class CampaignSpec:
         self._validate_artifact_consistency()
         self._validate_environment()
         self._validate_mutation_classes()
+        self._validate_tier4_policy()
         self._validate_arms()
         self._validate_compensation_plan()
         if not self.evaluators:
@@ -857,6 +869,29 @@ class CampaignSpec:
             raise InvalidCampaignSpecError(
                 "a scaffold-mutable campaign must pin its 'mutation_classes' — "
                 "declare each mutation class with its risk_dossier_digest and max_tier"
+            )
+
+    def _validate_tier4_policy(self) -> None:
+        """G7 — a scaffold spec pins the tier-4-allowing policy digest.
+
+        The pin is structural here (present, well-formed, and only on
+        scaffold specs); that it names the *right* policy — the research
+        tenant's signed seed document, which actually allows tier 4 — is
+        a deployment-level fact the control plane verifies at campaign
+        creation against its tenant-policy registry.
+        """
+        if self.has_scaffold_mutable:
+            if self.tier4_policy_digest is None:
+                raise InvalidCampaignSpecError(
+                    "a scaffold-mutable campaign must pin tier4_policy_digest — the "
+                    "digest of the tier-4-allowing seed policy document its promotions "
+                    "are governed by (G7)"
+                )
+            _require_digest(self.tier4_policy_digest, "tier-4 policy digest")
+        elif self.tier4_policy_digest is not None:
+            raise InvalidCampaignSpecError(
+                "tier4_policy_digest is only valid on a scaffold-mutable spec — "
+                "a campaign that cannot promote at tier 4 has no tier-4 policy to pin"
             )
 
     def _validate_arms(self) -> None:
@@ -1030,6 +1065,10 @@ class CampaignSpec:
             # omit-when-unset convention (G3): it is always serialized —
             # None for documents that predate it — so the digest binds
             # the environment claim.
+            # tier4_policy_digest is a G7 field and follows the same v3
+            # convention: always serialized, None for documents that
+            # predate it, so the tier-4 pin is bound by the signature.
+            "tier4_policy_digest": self.tier4_policy_digest,
         }
 
     def canonical_bytes(self) -> bytes:
@@ -1158,6 +1197,21 @@ class CampaignSpec:
                     policy_digest=_require_str(
                         raw["promotion_policy"]["policy_digest"], "policy digest"
                     ),
+                ),
+                tier4_policy_digest=(
+                    _require_digest(
+                        _require_str(raw["tier4_policy_digest"], "tier-4 policy digest"),
+                        "tier-4 policy digest",
+                    )
+                    # The v3 canonical form always serializes the key —
+                    # None for documents that predate G7 — so both an
+                    # absent key and an explicit null parse to None.
+                    # Structural requirements (mandatory on scaffold specs,
+                    # refused on non-scaffold specs) live in
+                    # _validate_tier4_policy, not here: a pre-G7 document
+                    # must still load.
+                    if raw.get("tier4_policy_digest") is not None
+                    else None
                 ),
                 statistics=StatisticsPlan(
                     alpha=_require_float(raw["statistics"]["alpha"], "alpha"),

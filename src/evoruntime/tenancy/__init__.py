@@ -7,7 +7,8 @@ refusal ledger (:mod:`evoruntime.tenancy.audit`) records every
 scaffold-mutation boundary refusal. The four boundary checks live at
 their call sites — spec construction, campaign creation / candidate
 registration, release activation, and the recursive-label gate — and all
-of them consult this package.
+of them consult this package. G7 ships the tier-4-allowing seed policy
+documents as signed policy data (:mod:`evoruntime.tenancy.seed`).
 """
 
 from __future__ import annotations

@@ -105,6 +105,9 @@ def _scaffold_spec_mapping(compensation_plan: dict[str, Any]) -> dict[str, Any]:
         *mapping["arms"],
         {"id": "fixed-editor", "kind": "fixed-editor", "editor_ref": "evo-prompt-strategist@gen-0"},
     ]
+    # G7: a scaffold-mutable campaign pins the digest of the tier-4-allowing
+    # seed policy its promotions are governed by.
+    mapping["tier4_policy_digest"] = "sha256:" + "c" * 64
     return CampaignSpec.from_mapping(mapping)
 
 

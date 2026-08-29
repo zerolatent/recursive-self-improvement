@@ -29,6 +29,16 @@ class CascadeDefinitionError(EvalError):
     """
 
 
+class BrokeredEgressDeniedError(EvalError):
+    """A model call was refused by the egress broker before any bytes moved.
+
+    The §13.2 bypass closure (H10): harness backends dial model providers
+    only through the broker's model_hosts allowlist, and a host not on it
+    fails closed — typed, so the runner records the attempt as a backend
+    error instead of the request leaking out unmediated.
+    """
+
+
 class MarginalContributionError(EvalError):
     """A marginal-contribution record set could not be built or restored.
 

@@ -109,6 +109,12 @@ def _scaffold_spec_mapping(environment: str | None = None) -> dict[str, Any]:
             "max_tier": "executable",
         },
     ]
+    # G4: a scaffold-mutable campaign must carry exactly one fixed-editor
+    # arm — the incumbent scaffold evaluated under the frozen editor.
+    mapping["arms"] = [
+        *mapping["arms"],
+        {"id": "fixed-editor", "kind": "fixed-editor", "editor_ref": "evo-prompt-strategist@gen-0"},
+    ]
     if environment is not None:
         mapping["environment"] = environment
     else:
@@ -404,33 +410,62 @@ def _satisfied_verdict() -> Any:
             causal_inheritance=True,
             matched_compute_one_shot_advantage=True,
             no_inheritance_control_arm=True,
+            fixed_editor_control_arm=True,
+            fixed_editor_advantage=0.08,
+            fixed_editor_minimum_effect=0.05,
+            fixed_editor_holm_significant=True,
         )
     )
 
 
-def test_recursive_label_refused_outside_research(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Boundary 4 — the label is research-only, even with a satisfied gate."""
-    monkeypatch.setattr("evoruntime.selection.recursive_gate.RECURSIVE_CLAIM_ENABLED", True)
+def _standalone_policy(
+    *,
+    environment: TenantEnvironment,
+    recursive_claims_enabled: bool = False,
+) -> TenantPolicyDocument:
+    """A one-off policy document for the sessionless label-gate tests."""
+    return TenantPolicyDocument(
+        tenant_id=f"tnt_label_{uuid.uuid4().hex[:8]}",
+        policy_id=f"pol_label_{uuid.uuid4().hex[:8]}",
+        environment=environment,
+        allowed_authority_tiers=(1, 2, 3, 4)
+        if environment is TenantEnvironment.RESEARCH
+        else (1, 2, 3),
+        recursive_claims_enabled=recursive_claims_enabled,
+    )
+
+
+def test_recursive_label_refused_outside_research() -> None:
+    """Boundary 4 — the label is research-only, even with a satisfied gate:
+    enablement is the tenant's policy data (G4), and neither a production
+    document nor an unmapped tenant carries it."""
     verdict = _satisfied_verdict()
     with pytest.raises(RecursiveClaimDeniedError, match="research-only"):
-        assert_label_allowed(RECURSIVE_IMPROVEMENT_LABEL, verdict, tenant_environment="production")
+        assert_label_allowed(
+            RECURSIVE_IMPROVEMENT_LABEL,
+            verdict,
+            tenant_policy=_standalone_policy(environment=TenantEnvironment.PRODUCTION),
+        )
     with pytest.raises(RecursiveClaimDeniedError, match="research-only"):
-        assert_label_allowed(RECURSIVE_IMPROVEMENT_LABEL, verdict, tenant_environment=None)
-    assert_label_allowed(RECURSIVE_IMPROVEMENT_LABEL, verdict, tenant_environment="research")
-
-
-def test_recursive_label_claim_requires_research_environment(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """`claim_label` answers honestly: production earns the honest label."""
-    monkeypatch.setattr("evoruntime.selection.recursive_gate.RECURSIVE_CLAIM_ENABLED", True)
-
-    assert claim_label(_satisfied_verdict(), tenant_environment="production") == (
-        "artifact optimization"
+        assert_label_allowed(RECURSIVE_IMPROVEMENT_LABEL, verdict, tenant_policy=None)
+    assert_label_allowed(
+        RECURSIVE_IMPROVEMENT_LABEL,
+        verdict,
+        tenant_policy=_standalone_policy(
+            environment=TenantEnvironment.RESEARCH, recursive_claims_enabled=True
+        ),
     )
-    assert claim_label(_satisfied_verdict(), tenant_environment="research") == (
+
+
+def test_recursive_label_claim_requires_research_environment() -> None:
+    """`claim_label` answers honestly: production earns the honest label."""
+    production = _standalone_policy(environment=TenantEnvironment.PRODUCTION)
+    research = _standalone_policy(
+        environment=TenantEnvironment.RESEARCH, recursive_claims_enabled=True
+    )
+
+    assert claim_label(_satisfied_verdict(), tenant_policy=production) == ("artifact optimization")
+    assert claim_label(_satisfied_verdict(), tenant_policy=research) == (
         RECURSIVE_IMPROVEMENT_LABEL
     )
 
@@ -438,11 +473,9 @@ def test_recursive_label_claim_requires_research_environment(
 def test_recursive_label_refusal_in_production_tenant_is_audited(
     service: tuple[CampaignApiService, Ed25519PrivateKey, Tenants],
     session_factory: sessionmaker[Session],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The audited wrapper records the refusal before raising."""
     svc, _, ts = service
-    monkeypatch.setattr("evoruntime.selection.recursive_gate.RECURSIVE_CLAIM_ENABLED", True)
     with session_factory() as session:
         with pytest.raises(TenantRefusalError, match="research"):
             assert_recursive_label_allowed(

@@ -62,7 +62,6 @@ from evoruntime.selection.productivity import (
 )
 from evoruntime.selection.recursive_gate import (
     ARTIFACT_OPTIMIZATION_LABEL,
-    RECURSIVE_CLAIM_ENABLED,
     RECURSIVE_IMPROVEMENT_LABEL,
     RecursiveClaimCondition,
     RecursiveClaimEvidence,
@@ -92,7 +91,6 @@ __all__ = [
     "NOMINATION_METRICS",
     "APPROVAL_FREE_MAX_TIER",
     "PRODUCTIVITY_COST_COLUMNS",
-    "RECURSIVE_CLAIM_ENABLED",
     "RECURSIVE_IMPROVEMENT_LABEL",
     "REJECT_EVENT_KIND",
     "AlreadyFrozenError",

@@ -72,9 +72,10 @@ def strategy_for(arm: Arm) -> ArmStrategy:
     - one-shot-control: one attempt, no tool loop — the floor a real agent
       must clear, and the arm that shows how much of a result is the
       scaffolding rather than the model.
-    - strategy and ablation: one attempt, tools on, incumbent envelope —
-      both isolate a *content* delta (the proposed artifact, the removed
-      component), so the envelope must not move with them.
+    - strategy, ablation, and fixed-editor: one attempt, tools on,
+      incumbent envelope — each isolates one delta (the proposed artifact,
+      the removed component, the frozen editor generation), so the
+      envelope must not move with any of them.
     """
     match arm.kind:
         case ArmKind.INCUMBENT:
@@ -95,6 +96,12 @@ def strategy_for(arm: Arm) -> ArmStrategy:
             # removed component, so the arm must spend the incumbent's
             # envelope exactly — the only allowed delta is the missing
             # component. (FR-101.)
+            return ArmStrategy(max_attempts=1, allow_tools=True, verifier=ClaimedOutcomeVerifier())
+        case ArmKind.FIXED_EDITOR:
+            # The fixed-editor arm (G4) evaluates the incumbent scaffold
+            # under the frozen editor, so its envelope is the incumbent's
+            # too — the comparison it exists for (RI-3/RI-4) is over the
+            # editor generation, and any other delta would confound it.
             return ArmStrategy(max_attempts=1, allow_tools=True, verifier=ClaimedOutcomeVerifier())
 
 

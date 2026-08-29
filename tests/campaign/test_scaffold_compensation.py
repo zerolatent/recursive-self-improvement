@@ -76,6 +76,14 @@ def _scaffold_spec_mapping(compensation_plan: dict[str, Any]) -> dict[str, Any]:
     # G6 boundary 1: a scaffold-mutable campaign must declare environment
     # research explicitly — an unspecified environment is refused.
     mapping["environment"] = "research"
+    # G3: a scaffold-mutable campaign must pin its mutation classes.
+    mapping["mutation_classes"] = [
+        {
+            "class_id": "prompt_module_edit",
+            "risk_dossier_digest": "sha256:" + "a" * 64,
+            "max_tier": "executable",
+        },
+    ]
     # The incumbent's class must appear exactly once (the primary mutable
     # artifact); the scaffold rides alongside it as the mutable target.
     mapping["mutable_artifacts"] = [
@@ -83,6 +91,12 @@ def _scaffold_spec_mapping(compensation_plan: dict[str, Any]) -> dict[str, Any]:
         {"artifact_type": "scaffold", "paths": ["src/agent/planner.py"]},
     ]
     mapping["compensation_plan"] = compensation_plan
+    # G4: a scaffold-mutable campaign must carry exactly one fixed-editor
+    # arm — the incumbent scaffold evaluated under the frozen editor.
+    mapping["arms"] = [
+        *mapping["arms"],
+        {"id": "fixed-editor", "kind": "fixed-editor", "editor_ref": "evo-prompt-strategist@gen-0"},
+    ]
     return CampaignSpec.from_mapping(mapping)
 
 

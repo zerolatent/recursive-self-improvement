@@ -32,6 +32,7 @@ from evoruntime.tenancy.boundaries import (
     SCAFFOLD_REQUIRES_RESEARCH,
     RefusalBoundary,
 )
+from evoruntime.tenancy.environment import TenantEnvironment
 from evoruntime.tenancy.errors import TenantRefusalError
 from evoruntime.tenancy.policy import TenantPolicyRegistry
 
@@ -92,17 +93,20 @@ def assert_recursive_label_allowed(
     verdict: RecursiveClaimVerdict | None,
     actor: str = "",
 ) -> None:
-    """Boundary 4 — the recursive-label gate, environment-scoped (G6).
+    """Boundary 4 — the recursive-label gate, environment-scoped (G4/G6).
 
     Routes the label through :func:`assert_label_allowed` with the
-    tenant's resolved environment; a refusal is recorded in the ledger
-    before the error is raised, same commit discipline as every other
-    boundary. Callers with a session use this; the pure
-    :func:`assert_label_allowed` stays importable for sessionless code.
+    tenant's resolved policy document — the enablement is per-environment
+    policy data (G4), so the gate reads the document, not a module
+    constant. A refusal is recorded in the ledger before the error is
+    raised, same commit discipline as every other boundary. Callers with
+    a session use this; the pure :func:`assert_label_allowed` stays
+    importable for sessionless code.
     """
-    environment = policies.environment_for(tenant_id)
+    document = policies.policy_for(tenant_id)
+    environment = document.environment if document is not None else TenantEnvironment.PRODUCTION
     try:
-        assert_label_allowed(label, verdict, tenant_environment=environment)
+        assert_label_allowed(label, verdict, tenant_policy=document)
     except RecursiveClaimDeniedError as exc:
         record_refusal(
             session,

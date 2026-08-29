@@ -25,6 +25,44 @@ from evoruntime.eval.experiment import MIN_SEEDS
 from tests.eval.conftest import three_arm_experiment
 
 
+class TestFixedEditorArm:
+    """G4: the fixed-editor arm — the incumbent scaffold evaluated under
+    the frozen editor — with ABLATION-style editor_ref-only validation."""
+
+    def test_fixed_editor_arm_constructs_with_an_editor_ref(self) -> None:
+        arm = Arm.fixed_editor("fixed-editor", "evo-prompt-strategist@gen-0")
+        assert arm.kind is ArmKind.FIXED_EDITOR
+        assert arm.editor_reference == "evo-prompt-strategist@gen-0"
+
+    def test_fixed_editor_arm_without_an_editor_ref_is_refused(self) -> None:
+        with pytest.raises(ExperimentDefinitionError, match="editor_ref"):
+            Arm(id="fixed-editor", kind=ArmKind.FIXED_EDITOR)
+
+    def test_editor_ref_on_any_other_kind_is_refused(self) -> None:
+        for kind in (
+            ArmKind.INCUMBENT,
+            ArmKind.RETRY_SELF_CONSISTENCY,
+            ArmKind.ONE_SHOT_CONTROL,
+            ArmKind.STRATEGY,
+        ):
+            with pytest.raises(ExperimentDefinitionError, match="editor_ref"):
+                Arm(id="stray", kind=kind, editor_ref="evo-prompt-strategist@gen-0")
+        # An ABLATION arm must satisfy its own component_id rule before the
+        # editor_ref rule can fire, so it gets a valid component id here.
+        with pytest.raises(ExperimentDefinitionError, match="editor_ref"):
+            Arm(
+                id="stray",
+                kind=ArmKind.ABLATION,
+                component_id="retriever",
+                editor_ref="evo-prompt-strategist@gen-0",
+            )
+
+    def test_editor_reference_property_refuses_non_fixed_editor_arms(self) -> None:
+        arm = Arm(id="incumbent", kind=ArmKind.INCUMBENT)
+        with pytest.raises(ExperimentDefinitionError, match="fixed-editor"):
+            _ = arm.editor_reference
+
+
 def test_the_spec_sample_constructs() -> None:
     """The spec's Experiment sample is the contract; it must build as written."""
     exp = Experiment(

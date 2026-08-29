@@ -1,5 +1,4 @@
 """Spec validation, pin+sign, and YAML round-trip tests (§11.2).
-
 The negative tests each mutate exactly one field of a valid spec, so a
 failure message names the field that broke — the same discipline the
 spec's own validation errors follow.
@@ -362,6 +361,12 @@ def make_scaffold_mapping() -> dict[str, object]:
         {"artifact_type": "scaffold", "paths": ["src/evoruntime/campaign/spec.py"]},
     ]
     raw["environment"] = "research"
+    # G4: a scaffold-mutable campaign must carry exactly one fixed-editor
+    # arm — the incumbent scaffold evaluated under the frozen editor.
+    raw["arms"] = [
+        *raw["arms"],  # type: ignore[operator]
+        {"id": "fixed-editor", "kind": "fixed-editor", "editor_ref": "evo-prompt-strategist@gen-0"},
+    ]
     raw["mutation_classes"] = [
         {
             "class_id": "prompt_module_edit",
@@ -698,3 +703,41 @@ class TestSandboxBudgetDimension:
     def test_sandbox_dimension_is_part_of_the_canonical_budgets(self) -> None:
         canonical = make_spec().to_canonical_dict()["budgets"]
         assert canonical["max_sandbox_executions"] == DEFAULT_MAX_SANDBOX_EXECUTIONS
+
+
+class TestFixedEditorArmRequirement:
+    """G4: a scaffold-mutable campaign must carry exactly one fixed-editor
+    arm — the incumbent scaffold evaluated under the frozen editor. Same
+    hard-requirement style as the Phase 0 control arms: refused at
+    construction, never a judgment call."""
+
+    def test_scaffold_spec_with_exactly_one_fixed_editor_arm_parses(self) -> None:
+        spec = CampaignSpec.from_mapping(make_scaffold_mapping())
+        fixed_editors = [arm for arm in spec.arms if arm.kind == "fixed-editor"]
+        assert len(fixed_editors) == 1
+        assert fixed_editors[0].editor_ref == "evo-prompt-strategist@gen-0"
+
+    def test_scaffold_spec_without_a_fixed_editor_arm_is_refused(self) -> None:
+        raw = make_scaffold_mapping()
+        raw["arms"] = [arm for arm in raw["arms"] if arm["kind"] != "fixed-editor"]  # type: ignore[index,union-attr]
+        with pytest.raises(InvalidCampaignSpecError, match="fixed-editor"):
+            CampaignSpec.from_mapping(raw)  # type: ignore[arg-type]
+
+    def test_scaffold_spec_with_two_fixed_editor_arms_is_refused(self) -> None:
+        raw = make_scaffold_mapping()
+        raw["arms"] = [
+            *raw["arms"],  # type: ignore[operator]
+            {"id": "fixed-editor-2", "kind": "fixed-editor", "editor_ref": "other@gen-0"},
+        ]
+        with pytest.raises(InvalidCampaignSpecError, match="fixed-editor"):
+            CampaignSpec.from_mapping(raw)  # type: ignore[arg-type]
+
+    def test_non_scaffold_spec_does_not_require_a_fixed_editor_arm(self) -> None:
+        spec = CampaignSpec.from_mapping(make_v3_mapping())
+        assert not any(arm.kind == "fixed-editor" for arm in spec.arms)
+
+    def test_editor_ref_round_trips_through_the_canonical_form(self) -> None:
+        spec = CampaignSpec.from_mapping(make_scaffold_mapping())
+        reparsed = CampaignSpec.from_mapping(spec.to_canonical_dict())
+        assert reparsed.canonical_bytes() == spec.canonical_bytes()
+        assert reparsed.arms[-1].editor_ref == "evo-prompt-strategist@gen-0"

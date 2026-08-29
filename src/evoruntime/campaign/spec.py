@@ -887,7 +887,30 @@ class CampaignSpec:
                     f"(the three Phase 0 control arms plus the strategy arm), "
                     f"found {kinds.count(kind)}"
                 )
+        self._validate_fixed_editor_arm()
         self._validate_ablation_arms()
+
+    def _validate_fixed_editor_arm(self) -> None:
+        """A scaffold-mutable campaign must carry its fixed-editor arm (G4).
+
+        The fixed-editor arm is the incumbent scaffold evaluated under the
+        frozen editor — the strategy plugin pinned at its
+        incumbent-generation version. Without it, a scaffold campaign's
+        only comparison is against a static incumbent, and the editor's own
+        gains could be claimed as recursion (the §12.6 RI-3/RI-4 condition
+        has no denominator). Same hard-requirement style as the Phase 0
+        control arms: exactly one, refused at construction.
+        """
+        if not self.has_scaffold_mutable:
+            return
+        fixed_editors = [arm for arm in self.arms if arm.kind is ArmKind.FIXED_EDITOR]
+        if len(fixed_editors) != 1:
+            raise InvalidCampaignSpecError(
+                "a scaffold-mutable campaign needs exactly one "
+                f"{ArmKind.FIXED_EDITOR.value} arm (the incumbent scaffold "
+                "evaluated under the frozen editor), found "
+                f"{len(fixed_editors)}"
+            )
 
     def _validate_ablation_arms(self) -> None:
         """Hold every ABLATION arm inside the preregistered family (FR-101).
@@ -979,6 +1002,9 @@ class CampaignSpec:
                     # for every other kind keeps the canonical bytes (and
                     # so the digest) stable for specs that predate F8.
                     **({"component_id": arm.component_id} if arm.component_id is not None else {}),
+                    # editor_ref is a FIXED_EDITOR-only field (G4): same
+                    # omit-when-unset pattern, same digest-stability reason.
+                    **({"editor_ref": arm.editor_ref} if arm.editor_ref is not None else {}),
                 }
                 for arm in self.arms
             ],
@@ -1071,6 +1097,11 @@ class CampaignSpec:
                         component_id=(
                             _require_str(arm["component_id"], "arm component_id")
                             if "component_id" in arm
+                            else None
+                        ),
+                        editor_ref=(
+                            _require_str(arm["editor_ref"], "arm editor_ref")
+                            if "editor_ref" in arm
                             else None
                         ),
                     )

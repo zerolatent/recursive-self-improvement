@@ -73,6 +73,9 @@ def _scaffold_spec_mapping(compensation_plan: dict[str, Any]) -> dict[str, Any]:
     a Phase 3 scaffold campaign pins."""
     mapping = make_spec_mapping()
     mapping["schema_version"] = 2
+    # G6 boundary 1: a scaffold-mutable campaign must declare environment
+    # research explicitly — an unspecified environment is refused.
+    mapping["environment"] = "research"
     # The incumbent's class must appear exactly once (the primary mutable
     # artifact); the scaffold rides alongside it as the mutable target.
     mapping["mutable_artifacts"] = [

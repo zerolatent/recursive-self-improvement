@@ -41,7 +41,10 @@ from datetime import date
 from typing import Any, Protocol
 
 from evoruntime.campaign.compensation import CompensationActionKind
-from evoruntime.campaign.errors import InvalidCampaignSpecError
+from evoruntime.campaign.errors import (
+    InvalidCampaignSpecError,
+    ScaffoldEnvironmentRefusedError,
+)
 from evoruntime.datasets.partitions import HOLDOUT_HANDLE_SCHEME
 from evoruntime.eval.budgets import resolve_budget_profile
 from evoruntime.eval.cascade import EvaluatorCostClass
@@ -50,6 +53,7 @@ from evoruntime.eval.experiment import Arm, ArmKind
 from evoruntime.eval.statistics import MIN_BOOTSTRAP_ITERATIONS, MultiplicityMethod
 from evoruntime.plugins.manifest import PluginArtifactType
 from evoruntime.security.signing import DetachedSignature, sign, verify
+from evoruntime.tenancy.environment import TenantEnvironment, is_scaffold_class
 
 SUPPORTED_SPEC_VERSION = 2
 """The campaign-spec schema version this runtime understands.
@@ -70,6 +74,20 @@ pins to the v2 digest; after it, v1 specs are refused. Documented in
 _DIGEST_PREFIX = "sha256:"
 
 _HOLDOUT_HANDLE_PREFIX = f"{HOLDOUT_HANDLE_SCHEME}://"
+
+
+def _is_admissible_artifact_type(value: str) -> bool:
+    """True for every artifact class a spec may name (Phase 3, G6).
+
+    The Phase 1/2 classes plus the scaffold-mutation research class
+    (``scaffold`` — G1 lands the enum member and its capture machinery;
+    matching by value string keeps this module independent of that PR).
+    Admissible is not approved: a scaffold-class mutable set is refused by
+    :meth:`CampaignSpec._validate_environment` unless the spec pins
+    ``environment: research`` — the class being known to the spec
+    validator is what makes that boundary check reachable.
+    """
+    return value in {t.value for t in PluginArtifactType} or is_scaffold_class(value)
 
 
 def _require_digest(value: str, what: str) -> str:
@@ -103,7 +121,7 @@ class IncumbentBinding:
 
     def __post_init__(self) -> None:
         _require_digest(self.release_manifest_digest, "incumbent release manifest digest")
-        if self.artifact_type not in {t.value for t in PluginArtifactType}:
+        if not _is_admissible_artifact_type(self.artifact_type):
             raise InvalidCampaignSpecError(
                 f"incumbent artifact_type {self.artifact_type!r} is not a Phase 1 artifact class"
             )
@@ -130,7 +148,7 @@ class MutableArtifact:
     paths: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if self.artifact_type not in {t.value for t in PluginArtifactType}:
+        if not _is_admissible_artifact_type(self.artifact_type):
             raise InvalidCampaignSpecError(
                 f"mutable artifact_type {self.artifact_type!r} is not a Phase 1 artifact class"
             )
@@ -579,6 +597,14 @@ class CampaignSpec:
     stopping_rules: StoppingRules
     compensation_plan: CompensationPlanSection | None = None
     metadata: dict[str, str] = field(default_factory=dict)
+    environment: str | None = None
+    """The environment this campaign declares itself for (G6).
+
+    Absent on every pre-G6 spec — and omitted from the canonical form
+    when absent, so existing specs pin to their existing digests. A
+    scaffold-mutable set must declare ``research``; anything else is
+    refused at construction.
+    """
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "arms", tuple(self.arms))
@@ -593,6 +619,7 @@ class CampaignSpec:
         if not self.name:
             raise InvalidCampaignSpecError("campaign name must be non-empty")
         self._validate_artifact_consistency()
+        self._validate_environment()
         self._validate_arms()
         self._validate_compensation_plan()
         if not self.evaluators:
@@ -620,6 +647,36 @@ class CampaignSpec:
                 f"the mutable artifact set must contain exactly one artifact of the "
                 f"incumbent's artifact_type {self.incumbent.artifact_type!r} (the "
                 f"primary), found {len(matching)}"
+            )
+
+    def _validate_environment(self) -> None:
+        """G6 boundary 1 — spec construction: scaffold ⇒ research.
+
+        A mutable set containing a scaffold-class artifact is a
+        scaffold-mutation campaign, and scaffold mutation exists only in
+        the research environment. The declared `environment` must say so
+        explicitly — an unspecified environment is not research by
+        default, it is unspecified, and the check refuses it. The
+        artifact-class validators admit scaffold-class values precisely
+        so this check, not an "unknown class" refusal, decides the fate
+        of a scaffold spec.
+        """
+        if self.environment is not None and self.environment not in {
+            e.value for e in TenantEnvironment
+        }:
+            raise InvalidCampaignSpecError(
+                f"environment must be one of {sorted(e.value for e in TenantEnvironment)}, "
+                f"got {self.environment!r}"
+            )
+        if not any(
+            is_scaffold_class(artifact.artifact_type)
+            for artifact in self.mutable_artifacts.artifacts
+        ):
+            return
+        if self.environment != TenantEnvironment.RESEARCH.value:
+            raise ScaffoldEnvironmentRefusedError(
+                "a scaffold-mutable campaign requires environment: research — "
+                "scaffold mutation is refused outside the research tenant (G6)"
             )
 
     def _validate_arms(self) -> None:
@@ -696,6 +753,14 @@ class CampaignSpec:
                 )
 
     @property
+    def has_scaffold_mutable(self) -> bool:
+        """True when the mutable set contains a scaffold-class artifact (G6)."""
+        return any(
+            is_scaffold_class(artifact.artifact_type)
+            for artifact in self.mutable_artifacts.artifacts
+        )
+
+    @property
     def mutable_artifact(self) -> MutableArtifact:
         """The primary mutable artifact (the incumbent's class).
 
@@ -749,6 +814,9 @@ class CampaignSpec:
                 else None
             ),
             "metadata": dict(sorted(self.metadata.items())),
+            # environment is a G6 field: omitted when unset so every
+            # pre-G6 spec pins to its existing digest.
+            **({"environment": self.environment} if self.environment is not None else {}),
         }
 
     def canonical_bytes(self) -> bytes:
@@ -895,6 +963,11 @@ class CampaignSpec:
                         raw["stopping_rules"]["max_no_improvement_rounds"],
                         "max_no_improvement_rounds",
                     ),
+                ),
+                environment=(
+                    _require_str(raw["environment"], "environment")
+                    if "environment" in raw
+                    else None
                 ),
                 compensation_plan=_parse_compensation_plan(raw),
                 metadata={str(k): str(v) for k, v in raw.get("metadata", {}).items()},

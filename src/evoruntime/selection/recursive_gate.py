@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from evoruntime.selection.errors import RecursiveClaimDeniedError
+from evoruntime.tenancy.environment import TenantEnvironment
 
 ARTIFACT_OPTIMIZATION_LABEL = "artifact optimization"
 RECURSIVE_IMPROVEMENT_LABEL = "recursive improvement"
@@ -100,24 +101,45 @@ def evaluate_recursive_claim(evidence: RecursiveClaimEvidence) -> RecursiveClaim
     return RecursiveClaimVerdict(conditions=conditions)
 
 
-def claim_label(verdict: RecursiveClaimVerdict | None) -> str:
+def claim_label(
+    verdict: RecursiveClaimVerdict | None,
+    *,
+    tenant_environment: TenantEnvironment | str | None = None,
+) -> str:
     """The honest label for a result.
 
-    "recursive improvement" requires the gate to be satisfied *and* the
-    phase-level claim switch to be on. In Phase 1 the switch is off, so
-    every result — gate satisfied or not — is labeled "artifact
-    optimization".
+    "recursive improvement" requires the gate to be satisfied, the
+    phase-level claim switch to be on, *and* — Phase 3 (G6) — the result
+    to belong to a research tenant. An absent environment is treated as
+    production (fail closed): recursive-improvement claims are
+    research-only, so a caller that cannot say which environment it is
+    in does not get the label. In Phase 1 the switch is off, so every
+    result — gate satisfied or not — is labeled "artifact optimization".
     """
-    if verdict is not None and verdict.satisfied and RECURSIVE_CLAIM_ENABLED:
+    if (
+        verdict is not None
+        and verdict.satisfied
+        and RECURSIVE_CLAIM_ENABLED
+        and _is_research(tenant_environment)
+    ):
         return RECURSIVE_IMPROVEMENT_LABEL
     return ARTIFACT_OPTIMIZATION_LABEL
 
 
-def assert_label_allowed(label: str, verdict: RecursiveClaimVerdict | None) -> None:
-    """Refuse a 'recursive improvement' label the gate and phase do not back.
+def assert_label_allowed(
+    label: str,
+    verdict: RecursiveClaimVerdict | None,
+    *,
+    tenant_environment: TenantEnvironment | str | None = None,
+) -> None:
+    """Refuse a 'recursive improvement' label the gate, phase, or tenant
+    environment does not back.
 
     Anything that renders a result — API, UI, report — routes its label
-    through here, so a claim cannot slip past :func:`claim_label`.
+    through here, so a claim cannot slip past :func:`claim_label`. The
+    environment check (G6) is the recursive-label boundary: the label is
+    refused outside a research tenant, and an absent environment counts
+    as production (fail closed).
     """
     if label != RECURSIVE_IMPROVEMENT_LABEL:
         return
@@ -126,11 +148,23 @@ def assert_label_allowed(label: str, verdict: RecursiveClaimVerdict | None) -> N
             "Phase 1 never labels a result 'recursive improvement' (locked "
             "decision #8) — the honest label is 'artifact optimization'"
         )
+    if not _is_research(tenant_environment):
+        raise RecursiveClaimDeniedError(
+            "recursive-improvement claims are research-only (G6) — a production "
+            "tenant (or an unmapped one) cannot earn the label"
+        )
     if verdict is None or not verdict.satisfied:
         raise RecursiveClaimDeniedError(
             "'recursive improvement' requires a satisfied §12.6 gate — "
             "the evidence does not back the claim"
         )
+
+
+def _is_research(tenant_environment: TenantEnvironment | str | None) -> bool:
+    """True only for an explicitly research environment (fail closed)."""
+    if tenant_environment is None:
+        return False
+    return TenantEnvironment(tenant_environment) is TenantEnvironment.RESEARCH
 
 
 __all__ = [

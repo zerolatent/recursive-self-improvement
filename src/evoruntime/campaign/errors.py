@@ -25,6 +25,17 @@ class InvalidCampaignSpecError(CampaignError):
     """
 
 
+class ScaffoldEnvironmentRefusedError(InvalidCampaignSpecError):
+    """A scaffold-mutable spec declared an environment other than research.
+
+    Phase 3 (G6): scaffold mutation exists only in the research tenant —
+    a spec whose mutable set contains a scaffold-class artifact must pin
+    `environment: research` at construction, before anything can be
+    pinned, signed, or run. A distinct type (not just a message) lets the
+    control plane audit the refusal at the spec-construction boundary.
+    """
+
+
 class SpecTamperedError(CampaignError):
     """A pinned campaign spec failed digest or signature verification.
 

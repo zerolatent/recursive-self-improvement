@@ -20,6 +20,25 @@ class EvalError(Exception):
     """Base class for evaluation-harness failures."""
 
 
+class CascadeDefinitionError(EvalError):
+    """A cascade was declared in a way the runner cannot execute.
+
+    Raised before any stage runs: an empty stage set or two stages sharing
+    a stage number has no defensible execution order, and running one
+    anyway would make the short-circuit semantics depend on sort stability.
+    """
+
+
+class MarginalContributionError(EvalError):
+    """A marginal-contribution record set could not be built or restored.
+
+    Raised when an experiment result is missing the comparison an ablation
+    arm is owed, or when contribution bytes fail their content-address
+    check on load — a record that does not hash to its own address is not
+    a record, it is a forgery of one.
+    """
+
+
 class ExperimentDefinitionError(EvalError):
     """An experiment or arm was declared in a way the harness cannot run.
 
@@ -113,6 +132,16 @@ class BackendCredentialError(EvalError):
     """
 
 
+class SuiteDefinitionError(EvalError):
+    """A transfer suite was declared or wired in a way the runner cannot run.
+
+    Raised before any family executes: a suite that would burn compute on
+    three families and then discover the fourth has no task source has no
+    defensible partial result — the evaluated set it would report is an
+    artifact of wiring order, not of evidence.
+    """
+
+
 class StatisticsError(EvalError):
     """A statistical routine was handed data it cannot draw a conclusion from."""
 
@@ -121,11 +150,14 @@ __all__ = [
     "BackendCredentialError",
     "BackendRequestError",
     "BudgetExceededError",
+    "CascadeDefinitionError",
     "EvalError",
     "ExperimentDefinitionError",
+    "MarginalContributionError",
     "ScriptedAgentError",
     "SealedPartitionError",
     "StatisticsError",
+    "SuiteDefinitionError",
     "TaskSourceError",
     "UnknownBudgetProfileError",
 ]

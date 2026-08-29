@@ -1,0 +1,15 @@
+fixture_id: sa_mask_path_write_call
+category: mask_path_write
+description: Candidate source writes to a literal path outside the mutation mask.
+expected: block
+expected_violation: mask_path_write
+allowed_paths:
+  - scripts/apply.py
+files:
+  - path: scripts/apply.py
+    content: |
+      """Variant that edits a file the mask does not declare."""
+      def apply(rules: dict[str, str]) -> dict[str, str]:
+          with open("config/settings.yaml", "w") as handle:
+              handle.write("mode: overwrite\n")
+          return rules

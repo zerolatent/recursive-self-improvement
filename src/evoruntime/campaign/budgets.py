@@ -34,6 +34,7 @@ class CampaignBudget:
     max_proposals: int
     max_model_tokens: int
     max_wall_clock_minutes: float
+    max_sandbox_executions: int
 
     @classmethod
     def from_spec(cls, budgets: CampaignBudgets) -> CampaignBudget:
@@ -42,6 +43,7 @@ class CampaignBudget:
             max_proposals=budgets.max_proposals,
             max_model_tokens=budgets.max_model_tokens,
             max_wall_clock_minutes=budgets.max_wall_clock_minutes,
+            max_sandbox_executions=budgets.max_sandbox_executions,
         )
 
     def limit(self, dimension: str) -> float:
@@ -49,6 +51,8 @@ class CampaignBudget:
         match dimension:
             case "proposals":
                 return float(self.max_proposals)
+            case "sandbox_executions":
+                return float(self.max_sandbox_executions)
             case "model_tokens":
                 return float(self.max_model_tokens)
             case "wall_clock_minutes":
@@ -72,6 +76,7 @@ class CampaignBudgetMeter:
         self._started_at = self._clock.now()
         self._proposals = 0
         self._model_tokens = 0
+        self._sandbox_executions = 0
         self._declared_wall_clock_s = 0.0
 
     @property
@@ -88,6 +93,35 @@ class CampaignBudgetMeter:
     def model_tokens_charged(self) -> int:
         """Model tokens (input + output) recorded so far."""
         return self._model_tokens
+
+    @property
+    def sandbox_executions_charged(self) -> int:
+        """Sandbox executions recorded so far (Phase 2 F6 executable-run dimension)."""
+        return self._sandbox_executions
+
+    def can_charge_sandbox_executions(self, count: int) -> bool:
+        """Non-raising check: would charging `count` sandbox executions fit?"""
+        return self._first_violation(sandbox_executions=count) is None
+
+    def charge_sandbox_executions(self, count: int) -> None:
+        """Record sandbox executions (F1-isolated candidate runs), or refuse.
+
+        The orchestrator charges before dispatching each executable run, so
+        a campaign that exhausts its sandbox budget stops executing
+        candidates rather than being audited after overspending.
+
+        Raises:
+            CampaignBudgetExceededError: the charge would cross the ceiling.
+                Nothing is recorded — the caller must not perform the work.
+            ValueError: a negative charge.
+        """
+        if count < 0:
+            raise ValueError("budget charges must be non-negative")
+        violation = self._first_violation(sandbox_executions=count)
+        if violation is not None:
+            dimension, attempted = violation
+            raise CampaignBudgetExceededError(dimension, self._budget.limit(dimension), attempted)
+        self._sandbox_executions += count
 
     @property
     def elapsed_minutes(self) -> float:
@@ -154,6 +188,9 @@ class CampaignBudgetMeter:
             wall_clock_minutes_remaining=max(
                 0.0, self._budget.max_wall_clock_minutes - self.elapsed_minutes
             ),
+            sandbox_executions_remaining=max(
+                0, self._budget.max_sandbox_executions - self._sandbox_executions
+            ),
         )
 
     def exhausted(self) -> bool:
@@ -162,6 +199,7 @@ class CampaignBudgetMeter:
         return (
             remaining.proposals_remaining == 0
             or remaining.model_tokens_remaining == 0
+            or remaining.sandbox_executions_remaining == 0
             or remaining.wall_clock_minutes_remaining <= 0.0
         )
 
@@ -171,11 +209,13 @@ class CampaignBudgetMeter:
         proposals: int = 0,
         model_tokens: int = 0,
         wall_clock_s: float = 0.0,
+        sandbox_executions: int = 0,
     ) -> tuple[str, float] | None:
         """First breached dimension and the total that breached it, in a
         fixed order so stop reasons aggregate consistently."""
         prospective: tuple[tuple[str, float], ...] = (
             ("proposals", float(self._proposals + proposals)),
+            ("sandbox_executions", float(self._sandbox_executions + sandbox_executions)),
             ("model_tokens", float(self._model_tokens + model_tokens)),
             ("wall_clock_minutes", self.elapsed_minutes + wall_clock_s / _SECONDS_PER_MINUTE),
         )

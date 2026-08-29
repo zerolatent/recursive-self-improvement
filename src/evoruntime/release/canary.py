@@ -28,6 +28,14 @@ from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
 
+from evoruntime.campaign.compensation import (
+    CompensationExecutor,
+    ExecutionSink,
+    SignedCompensationPlan,
+    assert_promotion_allowed,
+    execute_rollback_compensations,
+)
+from evoruntime.campaign.errors import UnexecutedCompensationError
 from evoruntime.release.clock import WallClock
 from evoruntime.release.controller import ReleaseController
 from evoruntime.release.errors import InvalidCanaryConfigError, NoActiveReleaseError
@@ -146,11 +154,23 @@ class CanaryHarness:
         controller: ReleaseController,
         fleet: InProcessFleetSimulator,
         clock: WallClock,
+        compensation_plan: SignedCompensationPlan | None = None,
+        compensation_executions: ExecutionSink | None = None,
+        compensation_executor: CompensationExecutor | None = None,
     ) -> None:
         self._config = config
         self._controller = controller
         self._fleet = fleet
         self._clock = clock
+        # F5: when the campaign declared a compensation plan, the canary
+        # enforces it — promotion is refused while a requires-execution
+        # compensation is unexecuted, and a severity-1 rollback executes
+        # the declared compensations in declared order. CAS compensations
+        # need no extra execution: the controller's pointer rollback
+        # (the only CAS path to the active release pointer) covers them.
+        self._compensation_plan = compensation_plan
+        self._compensation_executions = compensation_executions
+        self._compensation_executor = compensation_executor
 
     def run(
         self,
@@ -240,8 +260,37 @@ class CanaryHarness:
 
         if stopped_reason is not None:
             rolled_back_to = incumbent_digest
+            # F5: execute the declared compensations in declared order
+            # before the pointer rollback lands — CAS actions ride the
+            # rollback itself, requires-execution actions run here with
+            # their evidence recorded.
+            if self._compensation_plan is not None and self._compensation_executor is not None:
+                for record in execute_rollback_compensations(
+                    self._compensation_plan, self._compensation_executor
+                ):
+                    if self._compensation_executions is not None:
+                        self._compensation_executions.append(record)
             self._controller.rollback(candidate)
             self._fleet.invalidate_caches(incumbent_digest)
+
+        if stopped_reason is None and self._compensation_plan is not None:
+            # F5 promotion gate: the canary completed, so the candidate is
+            # about to be promoted — a declared requires-execution
+            # compensation with no execution record refuses promotion. The
+            # refusal restores the incumbent before surfacing.
+            try:
+                assert_promotion_allowed(
+                    self._compensation_plan,
+                    (
+                        ()
+                        if self._compensation_executions is None
+                        else self._compensation_executions.all()
+                    ),
+                )
+            except UnexecutedCompensationError:
+                self._controller.rollback(candidate)
+                self._fleet.invalidate_caches(incumbent_digest)
+                raise
 
         return CanaryResult(
             outcome=(

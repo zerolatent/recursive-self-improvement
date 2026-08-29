@@ -220,6 +220,40 @@ def cmd_release_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_approval_request(args: argparse.Namespace) -> int:
+    """Open a review-board request (tier-3 promotion or privileged admission)."""
+    with build_client(args.config) as client:
+        result = client.create_approval_request(
+            kind=args.kind,
+            justification=args.justification,
+            campaign_id=args.campaign_id,
+            proposal_id=args.proposal_id,
+            plugin_id=args.plugin_id,
+            content_digest=args.content_digest,
+            privileged_role=args.privileged_role,
+        )
+    _print(result)
+    return 0
+
+
+def cmd_approval_decide(args: argparse.Namespace) -> int:
+    """Record one review-board decision as the verified caller."""
+    with build_client(args.config) as client:
+        result = client.decide_approval_request(
+            args.request_id, decision=args.decision, note=args.note
+        )
+    _print(result)
+    return 0
+
+
+def cmd_approval_status(args: argparse.Namespace) -> int:
+    """Show a review-board request with its recorded decisions."""
+    with build_client(args.config) as client:
+        result = client.get_approval_request(args.request_id)
+    _print(result)
+    return 0
+
+
 def cmd_candidate_diff(args: argparse.Namespace) -> int:
     """Show a candidate's semantic diff against its parent."""
     with build_client(args.config) as client:
@@ -344,6 +378,40 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--manifest-digest", required=True)
     status.set_defaults(func=cmd_release_status)
     _add_config_arg(status)
+
+    approval = sub.add_parser("approval", help="review-board approval workflow (F10)")
+    approval_sub = approval.add_subparsers(required=True)
+
+    approval_request = approval_sub.add_parser("request", help="open a review-board request")
+    approval_request.add_argument(
+        "--kind", required=True, choices=["tier3_promotion", "privileged_admission"]
+    )
+    approval_request.add_argument(
+        "--justification", required=True, help="why review-board approval is needed"
+    )
+    approval_request.add_argument("--campaign-id", default=None)
+    approval_request.add_argument("--proposal-id", default=None)
+    approval_request.add_argument("--plugin-id", default=None)
+    approval_request.add_argument("--content-digest", default=None)
+    approval_request.add_argument("--privileged-role", default=None)
+    approval_request.set_defaults(func=cmd_approval_request)
+    _add_config_arg(approval_request)
+
+    approval_decide = approval_sub.add_parser(
+        "decide", help="record one decision as the verified caller"
+    )
+    approval_decide.add_argument("--request-id", required=True)
+    approval_decide.add_argument("--decision", required=True, choices=["approve", "reject"])
+    approval_decide.add_argument("--note", default="")
+    approval_decide.set_defaults(func=cmd_approval_decide)
+    _add_config_arg(approval_decide)
+
+    approval_status = approval_sub.add_parser(
+        "status", help="show a request with its recorded decisions"
+    )
+    approval_status.add_argument("--request-id", required=True)
+    approval_status.set_defaults(func=cmd_approval_status)
+    _add_config_arg(approval_status)
 
     candidate = sub.add_parser("candidate", help="candidate inspection")
     candidate_sub = candidate.add_subparsers(required=True)

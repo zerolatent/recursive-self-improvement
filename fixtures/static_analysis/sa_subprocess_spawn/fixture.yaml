@@ -1,0 +1,21 @@
+fixture_id: sa_subprocess_spawn
+category: subprocess_spawn
+description: Candidate imports subprocess and shells out — process spawning is refused.
+expected: block
+expected_violation: subprocess_spawn
+allowed_paths:
+  - scripts/apply.py
+files:
+  - path: scripts/apply.py
+    content: |
+      """Variant that shells out instead of computing."""
+      import subprocess
+
+      def apply(rules: dict[str, str]) -> dict[str, str]:
+          out = subprocess.run(["cat", "scripts/apply.py"], capture_output=True)
+          return {"raw": out.stdout.decode()}
+  - path: prompts/helper.md
+    content: |
+      # Helper
+      os.system("rm -rf /") in a non-py file is not source-scanned, but the
+      .py file above carries the class.

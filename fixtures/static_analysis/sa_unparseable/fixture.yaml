@@ -1,0 +1,12 @@
+fixture_id: sa_unparseable
+category: unparseable_source
+description: Source that does not parse cannot be analyzed — refused, not trusted.
+expected: block
+expected_violation: unparseable_source
+allowed_paths:
+  - scripts/apply.py
+files:
+  - path: scripts/apply.py
+    content: |
+      def apply(rules: dict[str, str]) -> dict[str, str]
+          return rules

@@ -5,10 +5,11 @@ authority (PRD §12.5, §12.6, §13.3, FR-011)."""
 from __future__ import annotations
 
 from evoruntime.selection.authority import (
-    PHASE_1_MAX_TIER,
+    APPROVAL_FREE_MAX_TIER,
     AuthorityTier,
     ResolvedRelease,
-    assert_phase1_admissible,
+    TierApprovalEvidence,
+    assert_phase2_admissible,
     resolve_authority_tier,
 )
 from evoruntime.selection.errors import (
@@ -22,7 +23,9 @@ from evoruntime.selection.errors import (
     TierRejectedError,
 )
 from evoruntime.selection.nomination import (
+    COST_NORMALIZATIONS,
     NOMINATE_EVENT_KIND,
+    NOMINATION_METRICS,
     REJECT_EVENT_KIND,
     FrozenNominees,
     InMemoryNominationLedger,
@@ -32,6 +35,8 @@ from evoruntime.selection.nomination import (
     RegistryNominationLedger,
     SelectionObservation,
     TrustedSelector,
+    attested_cost,
+    productivity_value,
 )
 from evoruntime.selection.policy import (
     CONDITION_BUDGET,
@@ -46,6 +51,14 @@ from evoruntime.selection.policy import (
     PromotionEvidence,
     PromotionPolicyDocument,
     evaluate_promotion,
+)
+from evoruntime.selection.productivity import (
+    PRODUCTIVITY_COST_COLUMNS,
+    LineageProductivityService,
+    ProductivityProjectionRow,
+    ProductivitySummary,
+    project_productivity,
+    summarize_productivity,
 )
 from evoruntime.selection.recursive_gate import (
     ARTIFACT_OPTIMIZATION_LABEL,
@@ -75,7 +88,10 @@ __all__ = [
     "CONDITION_STATISTICAL",
     "CONDITION_TRANSFER_SCOPE",
     "NOMINATE_EVENT_KIND",
-    "PHASE_1_MAX_TIER",
+    "COST_NORMALIZATIONS",
+    "NOMINATION_METRICS",
+    "APPROVAL_FREE_MAX_TIER",
+    "PRODUCTIVITY_COST_COLUMNS",
     "RECURSIVE_CLAIM_ENABLED",
     "RECURSIVE_IMPROVEMENT_LABEL",
     "REJECT_EVENT_KIND",
@@ -86,6 +102,7 @@ __all__ = [
     "FrozenNominees",
     "InMemoryNominationLedger",
     "InMemoryPointerAuditLog",
+    "LineageProductivityService",
     "InvalidPromotionPolicyError",
     "NominationEvent",
     "NominationLedger",
@@ -98,6 +115,8 @@ __all__ = [
     "PromotionDecision",
     "PromotionEvidence",
     "PromotionPolicyDocument",
+    "ProductivityProjectionRow",
+    "ProductivitySummary",
     "RecursiveClaimCondition",
     "RecursiveClaimDeniedError",
     "RecursiveClaimEvidence",
@@ -108,12 +127,17 @@ __all__ = [
     "ResolvedRelease",
     "SelectionError",
     "SelectionObservation",
+    "TierApprovalEvidence",
     "TierRejectedError",
     "TrustedSelector",
     "assert_label_allowed",
-    "assert_phase1_admissible",
+    "attested_cost",
+    "assert_phase2_admissible",
     "claim_label",
     "evaluate_promotion",
     "evaluate_recursive_claim",
+    "project_productivity",
+    "productivity_value",
     "resolve_authority_tier",
+    "summarize_productivity",
 ]

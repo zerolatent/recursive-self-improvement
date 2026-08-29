@@ -16,7 +16,16 @@ import yaml
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from evoruntime.campaign.errors import InvalidCampaignSpecError
-from evoruntime.campaign.spec import SUPPORTED_SPEC_VERSION, CampaignSpec, pin_and_sign
+from evoruntime.campaign.spec import (
+    DEFAULT_MAX_SANDBOX_EXECUTIONS,
+    SUPPORTED_SPEC_VERSION,
+    CampaignSpec,
+    EvaluatorBinding,
+    MutableArtifact,
+    MutableArtifactSet,
+    pin_and_sign,
+)
+from evoruntime.eval.cascade import EvaluatorCostClass
 from tests.campaign.conftest import make_spec, make_spec_mapping
 
 
@@ -49,13 +58,23 @@ class TestSpecValidation:
         with pytest.raises(InvalidCampaignSpecError, match="'budgets'"):
             CampaignSpec.from_mapping(raw)  # type: ignore[arg-type]
 
-    def test_artifact_type_must_match_the_incumbent(self) -> None:
+    def test_mutable_set_must_contain_the_incumbent_class_exactly_once(self) -> None:
         spec = make_spec()
-        mismatched = replace(spec.mutable_artifact, artifact_type="skill_package")
-        # dataclasses.replace re-runs __post_init__, which is where the
-        # consistency check lives — the mismatch is a construction error.
-        with pytest.raises(InvalidCampaignSpecError, match="does not match"):
-            replace(spec, mutable_artifact=mismatched)
+        # No member of the incumbent's class: nothing to optimize.
+        foreign = MutableArtifact(artifact_type="skill_package", paths=("skills/x.md",))
+        with pytest.raises(InvalidCampaignSpecError, match="exactly one artifact of the"):
+            replace(spec, mutable_artifacts=MutableArtifactSet(artifacts=(foreign,)))
+        # Two members of the incumbent's class: the primary is ambiguous —
+        # caught one layer down, as a duplicate class in the set.
+        with pytest.raises(InvalidCampaignSpecError, match="duplicate artifact_type"):
+            MutableArtifactSet(
+                artifacts=(
+                    spec.mutable_artifact,
+                    MutableArtifact(
+                        artifact_type=spec.incumbent.artifact_type, paths=("prompts/other.md",)
+                    ),
+                )
+            )
 
     def test_each_of_the_four_arms_is_required_exactly_once(self) -> None:
         kinds = [arm.kind.value for arm in make_spec().arms]
@@ -169,3 +188,237 @@ class TestYamlAuthoring:
     def test_non_mapping_yaml_is_refused(self) -> None:
         with pytest.raises(InvalidCampaignSpecError, match="mapping"):
             CampaignSpec.from_yaml("- just\n- a\n- list\n")
+
+
+# ---------------------------------------------------------------------------
+# Spec v2: MutableArtifactSet validation, v1 migration window, pinning (F4)
+# ---------------------------------------------------------------------------
+
+
+class TestMutableArtifactSetV2:
+    def test_v2_spec_requires_a_non_empty_mutable_artifacts_list(self) -> None:
+        raw = make_spec_mapping()
+        raw["schema_version"] = 2
+        raw["mutable_artifacts"] = []
+        with pytest.raises(InvalidCampaignSpecError, match="mutable_artifacts"):
+            CampaignSpec.from_mapping(raw)
+
+    def test_v2_spec_rejects_a_missing_mutable_artifacts_key(self) -> None:
+        raw = make_spec_mapping()  # v1 shape: singular mutable_artifact, no set
+        raw["schema_version"] = 2
+        raw.pop("mutable_artifacts", None)
+        with pytest.raises(InvalidCampaignSpecError, match="mutable_artifacts"):
+            CampaignSpec.from_mapping(raw)
+
+    def test_v2_set_parses_multiple_members_in_order(self) -> None:
+        raw = make_spec_mapping()
+        raw["schema_version"] = 2
+        raw["mutable_artifacts"] = [
+            {"artifact_type": "prompt_bundle", "paths": ["prompts/system.md"]},
+            {"artifact_type": "workflow_graph", "paths": ["workflows/main.yaml"]},
+        ]
+        spec = CampaignSpec.from_mapping(raw)
+        assert [m.artifact_type for m in spec.mutable_artifacts.artifacts] == [
+            "prompt_bundle",
+            "workflow_graph",
+        ]
+        assert spec.mutable_artifacts.artifacts[1].paths == ("workflows/main.yaml",)
+
+    def test_v2_set_rejects_duplicate_member_classes(self) -> None:
+        raw = make_spec_mapping()
+        raw["schema_version"] = 2
+        raw["mutable_artifacts"] = [
+            {"artifact_type": "prompt_bundle", "paths": ["prompts/system.md"]},
+            {"artifact_type": "prompt_bundle", "paths": ["prompts/other.md"]},
+        ]
+        with pytest.raises(InvalidCampaignSpecError, match="duplicate artifact_type"):
+            CampaignSpec.from_mapping(raw)
+
+    def test_primary_is_the_incumbent_class_member_wherever_it_sits(self) -> None:
+        """The primary is the member of the incumbent's class — validation
+        guarantees exactly one such member, not that it comes first."""
+        raw = make_spec_mapping()
+        raw["schema_version"] = 2
+        raw["mutable_artifacts"] = [
+            {"artifact_type": "workflow_graph", "paths": ["workflows/main.yaml"]},
+            {"artifact_type": "prompt_bundle", "paths": ["prompts/system.md"]},
+        ]
+        spec = CampaignSpec.from_mapping(raw)
+        # `mutable_artifact` is the back-compat primary view over the set.
+        assert spec.mutable_artifact.artifact_type == "prompt_bundle"
+        assert spec.mutable_artifact.paths == ("prompts/system.md",)
+
+    def test_v2_member_paths_are_mask_validated(self) -> None:
+        raw = make_spec_mapping()
+        raw["schema_version"] = 2
+        raw["mutable_artifacts"] = [
+            {"artifact_type": "prompt_bundle", "paths": ["/etc/passwd"]},
+        ]
+        with pytest.raises(InvalidCampaignSpecError, match="relative"):
+            CampaignSpec.from_mapping(raw)
+
+
+class TestV1MigrationWindow:
+    def test_v1_spec_parses_during_the_window_as_a_single_member_set(self) -> None:
+        spec = make_spec()
+        assert spec.schema_version == 2  # upgraded at parse time
+        assert len(spec.mutable_artifacts.artifacts) == 1
+        assert spec.mutable_artifacts.artifacts[0].artifact_type == (spec.incumbent.artifact_type)
+
+    def test_v1_spec_is_rejected_after_the_migration_window(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import evoruntime.campaign.spec as spec_module
+
+        class FrozenDate(spec_module.date):  # type: ignore[name-defined]
+            @classmethod
+            def today(cls) -> spec_module.date:  # type: ignore[name-defined]
+                return spec_module.date(2026, 10, 28)  # type: ignore[attr-defined]
+
+        monkeypatch.setattr(spec_module, "date", FrozenDate)
+        with pytest.raises(InvalidCampaignSpecError, match="migration window closed"):
+            CampaignSpec.from_mapping(make_spec_mapping())  # fixture is a v1 document
+
+    def test_v1_spec_is_still_accepted_on_the_windows_last_day(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import evoruntime.campaign.spec as spec_module
+
+        class FrozenDate(spec_module.date):  # type: ignore[name-defined]
+            @classmethod
+            def today(cls) -> spec_module.date:  # type: ignore[name-defined]
+                return spec_module.date(2026, 10, 27)  # type: ignore[attr-defined]
+
+        monkeypatch.setattr(spec_module, "date", FrozenDate)
+        spec = CampaignSpec.from_mapping(make_spec_mapping())  # window's last day
+        assert spec.schema_version == 2
+
+    def test_unsupported_schema_version_is_refused(self) -> None:
+        raw = make_spec_mapping()
+        raw["schema_version"] = 3
+        with pytest.raises(InvalidCampaignSpecError, match="schema_version"):
+            CampaignSpec.from_mapping(raw)
+
+
+class TestPinAndSignV2:
+    def test_pinned_digest_covers_the_whole_mutable_set(self) -> None:
+        """Changing any member of the set changes the pinned digest — the
+        signature vouches for every member, not just the primary."""
+        spec = make_spec()
+        pinned = pin_and_sign(spec, Ed25519PrivateKey.generate())
+        widened = replace(
+            spec,
+            mutable_artifacts=MutableArtifactSet(
+                artifacts=(
+                    *spec.mutable_artifacts.artifacts,
+                    MutableArtifact(artifact_type="workflow_graph", paths=("workflows/main.yaml",)),
+                )
+            ),
+        )
+        repinned = pin_and_sign(widened, Ed25519PrivateKey.generate())
+        assert pinned.digest != repinned.digest
+
+    def test_pinned_v2_spec_verifies(self) -> None:
+        spec = make_spec()
+        pinned = pin_and_sign(spec, Ed25519PrivateKey.generate())
+        assert pinned.verify()
+
+
+class TestCascadeEvaluatorBindings:
+    """F6 cascade fields on EvaluatorBinding: defaults, validation, canonical form."""
+
+    def test_binding_without_cascade_fields_defaults_to_the_cheapest_stage(self) -> None:
+        binding = make_spec().evaluators[0]
+        assert binding.stage == 0
+        assert binding.cost_class is EvaluatorCostClass.CHEAP
+        assert binding.short_circuit is True
+
+    def test_cascade_fields_round_trip_through_the_mapping(self) -> None:
+        raw = make_spec_mapping()
+        raw["evaluators"] = [
+            {
+                "name": "lint",
+                "pinned_image": "ghcr.io/evoruntime/lint@sha256:" + "c" * 64,
+                "stage": 0,
+                "cost_class": "cheap",
+                "short_circuit": True,
+            },
+            {
+                "name": "full-holdout",
+                "pinned_image": "ghcr.io/evoruntime/verifier@sha256:" + "c" * 64,
+                "stage": 2,
+                "cost_class": "expensive",
+                "short_circuit": False,
+            },
+        ]
+        spec = CampaignSpec.from_mapping(raw)
+
+        cheap, expensive = spec.evaluators
+        assert cheap.stage == 0 and cheap.cost_class is EvaluatorCostClass.CHEAP
+        assert expensive.stage == 2
+        assert expensive.cost_class is EvaluatorCostClass.EXPENSIVE
+        assert expensive.short_circuit is False
+
+    def test_negative_stage_is_refused(self) -> None:
+        raw = make_spec_mapping()
+        raw["evaluators"][0]["stage"] = -1
+        with pytest.raises(InvalidCampaignSpecError, match="stage must be >= 0"):
+            CampaignSpec.from_mapping(raw)  # type: ignore[arg-type]
+
+    def test_unknown_cost_class_is_refused(self) -> None:
+        raw = make_spec_mapping()
+        raw["evaluators"][0]["cost_class"] = "free"
+        with pytest.raises(InvalidCampaignSpecError, match="not a valid EvaluatorCostClass"):
+            CampaignSpec.from_mapping(raw)  # type: ignore[arg-type]
+
+    def test_non_boolean_short_circuit_is_refused(self) -> None:
+        raw = make_spec_mapping()
+        raw["evaluators"][0]["short_circuit"] = "yes"
+        with pytest.raises(InvalidCampaignSpecError, match="short_circuit"):
+            CampaignSpec.from_mapping(raw)  # type: ignore[arg-type]
+
+    def test_canonical_dict_carries_the_cascade_fields(self) -> None:
+        binding = EvaluatorBinding(
+            name="test-suite",
+            pinned_image="ghcr.io/evoruntime/verifier@sha256:" + "c" * 64,
+            stage=1,
+            cost_class=EvaluatorCostClass.STANDARD,
+            short_circuit=False,
+        )
+        assert binding.to_canonical_dict() == {
+            "name": "test-suite",
+            "pinned_image": "ghcr.io/evoruntime/verifier@sha256:" + "c" * 64,
+            "stage": 1,
+            "cost_class": "standard",
+            "short_circuit": False,
+        }
+
+    def test_cascade_fields_are_part_of_the_pinned_digest(self) -> None:
+        """A cascade order chosen after pinning is not a preregistration."""
+        spec = make_spec()
+        re_staged = replace(spec.evaluators[0], stage=1, cost_class=EvaluatorCostClass.EXPENSIVE)
+        assert replace(spec, evaluators=(re_staged,)).digest != spec.digest
+
+
+class TestSandboxBudgetDimension:
+    """F6 campaign budget dimension for executable (F1) runs."""
+
+    def test_max_sandbox_executions_defaults_to_the_registered_ceiling(self) -> None:
+        budgets = make_spec().budgets
+        assert budgets.max_sandbox_executions == DEFAULT_MAX_SANDBOX_EXECUTIONS
+
+    def test_max_sandbox_executions_round_trips_through_the_mapping(self) -> None:
+        raw = make_spec_mapping()
+        raw["budgets"]["max_sandbox_executions"] = 42
+        spec = CampaignSpec.from_mapping(raw)
+        assert spec.budgets.max_sandbox_executions == 42
+
+    def test_zero_sandbox_executions_is_refused(self) -> None:
+        raw = make_spec_mapping()
+        raw["budgets"]["max_sandbox_executions"] = 0
+        with pytest.raises(InvalidCampaignSpecError, match="max_sandbox_executions"):
+            CampaignSpec.from_mapping(raw)  # type: ignore[arg-type]
+
+    def test_sandbox_dimension_is_part_of_the_canonical_budgets(self) -> None:
+        canonical = make_spec().to_canonical_dict()["budgets"]
+        assert canonical["max_sandbox_executions"] == DEFAULT_MAX_SANDBOX_EXECUTIONS

@@ -1,0 +1,16 @@
+fixture_id: sa_mask_path_write_file
+category: mask_path_write
+description: Candidate carries a file whose path is outside the mutation mask.
+expected: block
+expected_violation: mask_path_write
+allowed_paths:
+  - scripts/apply.py
+files:
+  - path: scripts/apply.py
+    content: |
+      """Innocuous content — the violation is the sibling file's path."""
+      REVISIONS = {"tool_use": "Prefer file tools over shell."}
+  - path: config/settings.yaml
+    content: |
+      # A file the campaign mask never declared.
+      mode: overwrite

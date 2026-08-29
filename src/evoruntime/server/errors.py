@@ -13,15 +13,22 @@ from fastapi.responses import JSONResponse
 
 from evoruntime.api.errors import (
     AdapterNotConfiguredError,
+    AdmissionRecordNotFoundError,
+    AnalysisReportNotFoundError,
+    ApprovalDeniedError,
+    ApprovalRequestNotFoundError,
     CampaignApiError,
     CampaignNotFoundError,
+    CompensationPlanNotFoundError,
     DiffUnavailableError,
     EvidenceNotFoundError,
     InvalidCampaignTransitionError,
     InvalidSpecError,
     ProposalNotFoundError,
+    RegistrationRefusedError,
     ReleaseNotFoundError,
     ReleaseStateError,
+    TierPromotionRefusedError,
 )
 from evoruntime.datasets.errors import (
     HandleNotFoundError,
@@ -98,6 +105,47 @@ async def handle_adapter_not_configured(_: Request, exc: Exception) -> JSONRespo
     )
 
 
+async def handle_approval_denied(_: Request, exc: Exception) -> JSONResponse:
+    """Render a two-person review-board refusal as 403 with its reason.
+
+    Self-approval and duplicate-approver refusals are safe to echo: the
+    caller made the request and needs to know which governance rule
+    stopped it, not just that something did.
+    """
+    if not isinstance(exc, ApprovalDeniedError):  # pragma: no cover - registered per type
+        raise exc
+    return JSONResponse(
+        status_code=status.HTTP_403_FORBIDDEN,
+        content={"detail": str(exc), "reason": exc.reason},
+    )
+
+
+async def handle_tier_promotion_refused(_: Request, exc: Exception) -> JSONResponse:
+    """Render a tier gate refusal as 403 — the promotion is forbidden,
+    not malformed: the two-person gate has not been satisfied."""
+    if not isinstance(exc, TierPromotionRefusedError):  # pragma: no cover
+        raise exc
+    return JSONResponse(
+        status_code=status.HTTP_403_FORBIDDEN,
+        content={"detail": str(exc), "tier": exc.tier},
+    )
+
+
+async def handle_registration_refused(_: Request, exc: Exception) -> JSONResponse:
+    """Render a pre-registration gate refusal as 422 with the violations.
+
+    The violation payloads are the point of the refusal (F10): a caller
+    whose executable candidate is refused must be able to see exactly
+    which FR-018 admission rule or F3 static-analysis check failed.
+    """
+    if not isinstance(exc, RegistrationRefusedError):  # pragma: no cover
+        raise exc
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        content={"detail": str(exc), "source": exc.source, "violations": exc.violations},
+    )
+
+
 async def handle_campaign_api_error(_: Request, exc: Exception) -> JSONResponse:
     """Fallback for remaining control-plane errors: 400 with the reason."""
     if not isinstance(exc, CampaignApiError):  # pragma: no cover - registered per type
@@ -118,6 +166,14 @@ def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ProposalNotFoundError, handle_campaign_not_found)
     app.add_exception_handler(EvidenceNotFoundError, handle_campaign_not_found)
     app.add_exception_handler(ReleaseNotFoundError, handle_campaign_not_found)
+    # F10 review-board records: a tenant-scoped lookup that misses is 404.
+    app.add_exception_handler(ApprovalRequestNotFoundError, handle_campaign_not_found)
+    app.add_exception_handler(AdmissionRecordNotFoundError, handle_campaign_not_found)
+    app.add_exception_handler(CompensationPlanNotFoundError, handle_campaign_not_found)
+    app.add_exception_handler(AnalysisReportNotFoundError, handle_campaign_not_found)
+    app.add_exception_handler(ApprovalDeniedError, handle_approval_denied)
+    app.add_exception_handler(TierPromotionRefusedError, handle_tier_promotion_refused)
+    app.add_exception_handler(RegistrationRefusedError, handle_registration_refused)
     app.add_exception_handler(InvalidCampaignTransitionError, handle_invalid_transition)
     app.add_exception_handler(InvalidSpecError, handle_invalid_spec)
     app.add_exception_handler(ReleaseStateError, handle_release_state)

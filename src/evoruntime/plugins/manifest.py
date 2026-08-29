@@ -19,21 +19,46 @@ from enum import StrEnum
 
 from pydantic import Field, field_validator, model_validator
 
+from evoruntime.core.isolation import IsolationTier
 from evoruntime.core.schemas import EvoRuntimeBaseModel
 
 
-# The five Phase 1 low-risk artifact classes (spec: "Phase 1 closes that gap
-# for the low-risk artifact classes"). Executable skill scripts, workflow
-# graphs, tool specs, and harness patches are Phase 2 and are deliberately
-# absent — a manifest cannot declare what Phase 1 must never admit.
+# The five Phase 1 low-risk artifact classes, plus the five Phase 2
+# executable classes (F2). The executable classes are admissible only with
+# declared execution requirements (see :class:`ExecutionRequirements`) and
+# only through the Phase 2 tier gate — declaring the type in a manifest is
+# a request, never an authority.
 class PluginArtifactType(StrEnum):
-    """Artifact classes a Phase 1 plugin may declare."""
+    """Artifact classes a plugin may declare."""
 
     MEMORY_ENTRY = "memory_entry"
     PROMPT_BUNDLE = "prompt_bundle"
     DEMONSTRATION_SET = "demonstration_set"
     COMPILED_PROMPT_PROGRAM = "compiled_prompt_program"
     SKILL_PACKAGE = "skill_package"
+
+    # Phase 2 executable classes (PRD §13.3 tier mapping: the first four
+    # resolve to tier 3, harness_patch to tier 4).
+    WORKFLOW_GRAPH = "workflow_graph"
+    TOOL_SPEC = "tool_spec"
+    SKILL_SCRIPT = "skill_script"
+    ALGORITHM = "algorithm"
+    HARNESS_PATCH = "harness_patch"
+
+
+#: Classes whose members execute at runtime. A manifest declaring any of
+#: them must also declare :class:`ExecutionRequirements` — an executable
+#: artifact without declared executables and a minimum isolation tier is
+#: refused at the schema boundary, before any policy plane sees it.
+EXECUTABLE_ARTIFACT_TYPES: frozenset[PluginArtifactType] = frozenset(
+    {
+        PluginArtifactType.WORKFLOW_GRAPH,
+        PluginArtifactType.TOOL_SPEC,
+        PluginArtifactType.SKILL_SCRIPT,
+        PluginArtifactType.ALGORITHM,
+        PluginArtifactType.HARNESS_PATCH,
+    }
+)
 
 
 class PluginKind(StrEnum):
@@ -154,6 +179,24 @@ def check_compatibility(compatibility: CompatibilityRange, runtime_version: str)
     )
 
 
+class ExecutionRequirements(EvoRuntimeBaseModel):
+    """What running the manifest's executable classes requires (F2).
+
+    Declared per manifest, not per class: the executables are the entry
+    points the sandbox executor may spawn, and ``minimum_tier`` is the
+    floor isolation tier (1–4) under which they may run. Both are
+    mandatory — an executable class with no declared executables or no
+    minimum tier cannot be admitted, because "run it somewhere, anywhere"
+    is not an isolation declaration.
+    """
+
+    executables: tuple[str, ...] = Field(min_length=1)
+    """Executable entries the executor may spawn (paths or entry names)."""
+
+    minimum_tier: int = Field(ge=1, le=4)
+    """Minimum sandbox isolation tier (1 = loosest … 4 = strictest)."""
+
+
 class PluginManifest(EvoRuntimeBaseModel):
     """The §10.4 manifest: entrypoint, types, permissions, limits, reproducibility."""
 
@@ -167,6 +210,12 @@ class PluginManifest(EvoRuntimeBaseModel):
     permissions: PermissionRequest = Field(default_factory=PermissionRequest)
     limits: ResourceLimits
     reproducibility: Reproducibility
+    execution_requirements: ExecutionRequirements | None = None
+    # The isolation tier the plugin's entrypoint runs under (Phase 2 F1).
+    # Defaults to ``executable`` so Phase 1 manifests (subprocess + rlimits,
+    # no network) validate unchanged; the validator cross-checks the tier
+    # against the declared execution requirements below.
+    isolation_tier: IsolationTier = IsolationTier.EXECUTABLE
 
     @model_validator(mode="after")
     def _consistent(self) -> PluginManifest:
@@ -175,7 +224,54 @@ class PluginManifest(EvoRuntimeBaseModel):
                 raise ValueError("network=brokered requires model_access=true")
             if not self.permissions.model_hosts:
                 raise ValueError("network=brokered requires an explicit model_hosts allowlist")
+        executable_types = sorted(
+            t.value for t in self.artifact_types if t in EXECUTABLE_ARTIFACT_TYPES
+        )
+        if executable_types and self.execution_requirements is None:
+            raise ValueError(
+                "artifact types " + ", ".join(executable_types) + " are executable and "
+                "require declared execution_requirements (executables + minimum_tier)"
+            )
+        self._cross_check_tier()
         return self
+
+    def _cross_check_tier(self) -> None:
+        """The declared tier must agree with the declared execution needs.
+
+        A tier is a promise about what the entrypoint may do; a manifest
+        whose tier contradicts its own permission request is incoherent and
+        is rejected at parse time, not at spawn time.
+
+        Phase 1 manifests predate this field and do not declare it; their
+        network posture already governs execution, so the strict tier
+        cross-check applies only when the tier is explicit.
+        """
+        if "isolation_tier" not in self.model_fields_set:
+            return
+        network = self.permissions.network
+        if self.isolation_tier is IsolationTier.TEXT_ONLY:
+            # Nothing executes, so nothing may request a network path.
+            if network is not NetworkMode.NONE or self.permissions.model_access:
+                raise ValueError(
+                    "isolation_tier=text-only never executes; it cannot request "
+                    "network access or model calls"
+                )
+        elif self.isolation_tier is IsolationTier.BROKERED:
+            if network is not NetworkMode.BROKERED or not self.permissions.model_hosts:
+                raise ValueError(
+                    "isolation_tier=brokered requires network=brokered with an "
+                    "explicit model_hosts allowlist"
+                )
+        else:
+            # executable / highest: candidate bytes run, but with no direct
+            # network path — model traffic, if any, flows only through the
+            # broker, which the brokered tier declares.
+            if network is not NetworkMode.NONE:
+                raise ValueError(
+                    f"isolation_tier={self.isolation_tier.value} provides no direct "
+                    "network path; declare network=none (use the brokered tier for "
+                    "brokered model routes)"
+                )
 
 
 def validate_manifest(manifest: PluginManifest, runtime_version: str) -> tuple[str, ...]:

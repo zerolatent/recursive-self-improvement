@@ -70,6 +70,7 @@ from evoruntime.campaign.machine import CampaignOrchestrator, CampaignPhase, Cam
 from evoruntime.campaign.masks import MutationMask
 from evoruntime.campaign.spec import CampaignSpec, PinnedCampaignSpec, pin_and_sign
 from evoruntime.core.ids import new_id
+from evoruntime.core.metrics import COST_METRIC_KEYS as _COST_METRIC_KEYS
 from evoruntime.core.principal import Principal
 from evoruntime.db.base import session_scope
 from evoruntime.db.models.analysis import AnalysisReport
@@ -102,11 +103,10 @@ from evoruntime.security.identities import WorkloadIdentity, WorkloadRole
 from evoruntime.security.signing import DetachedSignature, sign
 
 #: Metric keys the Pareto view reports as *costs* rather than gains or
-#: regressions. Everything else is compared against the parent and split
-#: by the sign of its delta.
-COST_METRIC_KEYS = frozenset(
-    {"tokens", "total_tokens", "mean_total_tokens", "cost_usd", "wall_clock_s"}
-)
+#: regressions. Re-exported from `evoruntime.core.metrics` — FR-102's
+#: productivity selection shares the same closed vocabulary, and a
+#: vocabulary two planes agree on has one definition.
+COST_METRIC_KEYS = _COST_METRIC_KEYS
 
 #: Approval decisions the control plane records, mapped onto the E1
 #: status-event kinds. "approve" is spelled "nominate" — the E1 event

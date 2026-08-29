@@ -15,4 +15,5 @@ from evoruntime.db.models import analysis as analysis  # noqa: F401
 from evoruntime.db.models import events as events  # noqa: F401
 from evoruntime.db.models import lineage as lineage  # noqa: F401
 from evoruntime.db.models import memory as memory  # noqa: F401
+from evoruntime.db.models import productivity as productivity  # noqa: F401
 from evoruntime.db.models import registry as registry  # noqa: F401

@@ -1,0 +1,10 @@
+[
+  {
+    "action": "preserve_append_only_log",
+    "target": "lineage/generation-41"
+  },
+  {
+    "action": "record_failed_mutation_honestly",
+    "target": "lineage/generation-41"
+  }
+]

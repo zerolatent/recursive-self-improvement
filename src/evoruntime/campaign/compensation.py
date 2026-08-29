@@ -6,15 +6,23 @@ a workflow hook that already fired. The campaign spec therefore declares a
 :class:`CompensationPlanSection` — per-artifact compensating actions, each
 classified at authoring time:
 
-- **CAS actions** — ``restore_prior_release_pointer`` and
-  ``revoke_artifact``. They need *no extra execution*: the pointer
-  restore *is* the release controller's existing atomic rollback CAS,
-  and a revoked artifact is undone by the pointer move alone. The
+- **CAS actions** — ``restore_prior_release_pointer``,
+  ``revoke_artifact``, and (Phase 3, G8) ``restore_scaffold_source``.
+  They need *no extra execution*: the pointer restore *is* the release
+  controller's existing atomic rollback CAS, a revoked artifact is
+  undone by the pointer move alone, and a mutated scaffold's source is
+  restored by reading the incumbent's digest-pinned member modules back
+  out of the registry — a content-addressed swap whose correctness the
+  registry's verify-on-read proves, not an execution record. The
   release controller (E5) remains the only identity that can CAS the
   active release pointer — this module adds no second CAS path.
-- **Requires-execution actions** — ``run_compensation_hook``. These run
-  an externally declared, digest-pinned hook and must be *evidenced*:
-  an unexecuted one blocks promotion.
+- **Requires-execution actions** — ``run_compensation_hook`` and
+  (Phase 3, G8) ``rerun_conformance_suite``. These run something and
+  must be *evidenced*: an unexecuted one blocks promotion. A
+  ``rerun_conformance_suite`` action re-runs the scaffold's own pinned
+  conformance suite (the pin travels with the scaffold's file map, so
+  the compensation cannot be talked into judging the candidate by a
+  different oracle) against the restored source.
 
 Three disciplines this module enforces:
 
@@ -69,7 +77,7 @@ COMPENSATION_MODES = (CAS_MODE, REQUIRES_EXECUTION_MODE)
 
 
 class CompensationActionKind(StrEnum):
-    """The three compensating actions a spec may declare (F5)."""
+    """The compensating actions a spec may declare (F5, extended by G8)."""
 
     RESTORE_PRIOR_RELEASE_POINTER = "restore_prior_release_pointer"
     """CAS: the release controller's existing rollback move — no extra execution."""
@@ -80,16 +88,41 @@ class CompensationActionKind(StrEnum):
     RUN_COMPENSATION_HOOK = "run_compensation_hook"
     """Requires execution: an externally declared, digest-pinned hook."""
 
+    RESTORE_SCAFFOLD_SOURCE = "restore_scaffold_source"
+    """CAS (G8): restore the scaffold's member modules from the registry.
+
+    The registry read is the CAS: the incumbent scaffold's file map pins
+    every member module's digest, and the registry re-verifies digests on
+    every read, so the restored bytes are self-evidencing — no execution
+    record is needed, only the digest verification the restore itself
+    performs. Valid only against a campaign whose mutable set contains
+    the scaffold class (``CampaignSpec._validate_compensation_plan``).
+    """
+
+    RERUN_CONFORMANCE_SUITE = "rerun_conformance_suite"
+    """Requires execution (G8): re-run the scaffold's pinned conformance
+    suite and prove zero regressions before the rollback is discharged.
+    The suite pin comes from the scaffold's own file map — the action
+    declares no hook image of its own, so it cannot be pointed at a
+    different oracle than the candidate was judged by."""
+
 
 CAS_ACTION_KINDS = frozenset(
     {
         CompensationActionKind.RESTORE_PRIOR_RELEASE_POINTER,
         CompensationActionKind.REVOKE_ARTIFACT,
+        CompensationActionKind.RESTORE_SCAFFOLD_SOURCE,
     }
 )
-"""Action kinds with no extra execution — the pointer rollback covers them."""
+"""Action kinds with no extra execution — the pointer rollback (or, for
+scaffolds, the digest-verified registry restore) covers them."""
 
-REQUIRES_EXECUTION_ACTION_KINDS = frozenset({CompensationActionKind.RUN_COMPENSATION_HOOK})
+REQUIRES_EXECUTION_ACTION_KINDS = frozenset(
+    {
+        CompensationActionKind.RUN_COMPENSATION_HOOK,
+        CompensationActionKind.RERUN_CONFORMANCE_SUITE,
+    }
+)
 """Action kinds that must be executed and evidenced before promotion."""
 
 

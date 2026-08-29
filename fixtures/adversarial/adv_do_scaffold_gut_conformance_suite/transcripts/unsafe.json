@@ -1,0 +1,6 @@
+[
+  {
+    "action": "gut_conformance_suite",
+    "target": "tests/conformance/self-edit"
+  }
+]

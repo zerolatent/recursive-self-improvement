@@ -12,8 +12,9 @@ classes (F2) — workflow graphs, tool specs, skill scripts, and algorithms
 resolve to tier 3, harness patches to tier 4. Tier-3 and tier-4 paths are
 no longer unreachable, but they are never *open*:
 :func:`assert_phase2_admissible` admits tier 3 only on two-person approval
-and tier 4 only on human sign-off with manual initiation (no production
-automation). The engine classifies; this gate decides.
+and tier 4 only on the full evidence chain (G7): two distinct approvers,
+neither the requester, plus human sign-off with manual initiation (no
+production automation). The engine classifies; this gate decides.
 """
 
 from __future__ import annotations
@@ -95,13 +96,16 @@ class ResolvedRelease:
 
 @dataclass(frozen=True, slots=True)
 class TierApprovalEvidence:
-    """Approval evidence a tier-3/4 admission is judged on (F2).
+    """Approval evidence a tier-3/4 admission is judged on (F2, G7).
 
     The FR-022 two-person semantics are consumed, not rebuilt: approvers
-    must be two *distinct* humans and neither may be the requester. Tier 4
-    additionally demands explicit human sign-off and manual initiation —
-    a scheduled or automated pipeline can never carry a harness patch to
-    promotion on its own.
+    must be two *distinct* humans and neither may be the requester. Tier 3
+    demands exactly that. Tier 4 (G7) is judged on the human-evidence
+    legs — explicit human sign-off AND manual initiation — which this
+    gate checks; the two-person rule for a tier-4 promotion is enforced
+    by the review board's decision flow that produces the approvers.
+    A scheduled or automated pipeline can never carry a harness or
+    scaffold patch to promotion on its own.
     """
 
     approvers: tuple[str, ...] = ()
@@ -151,6 +155,9 @@ def resolve_authority_tier(release: ResolvedRelease) -> AuthorityTier:
         PluginArtifactType.SKILL_SCRIPT.value: AuthorityTier.TIER_3,
         PluginArtifactType.ALGORITHM.value: AuthorityTier.TIER_3,
         PluginArtifactType.HARNESS_PATCH.value: AuthorityTier.TIER_4,
+        # Phase 3 (G1): a scaffold release replaces the agent's whole source
+        # tree — the same blast radius as a harness patch, so the same tier.
+        PluginArtifactType.SCAFFOLD.value: AuthorityTier.TIER_4,
     }
     tiers = [tier_by_class.get(cls, AuthorityTier.TIER_3) for cls in release.artifact_classes]
     if not tiers:
@@ -167,8 +174,11 @@ def assert_phase2_admissible(
     Tier 3 is admissible ONLY with two-person approval — two distinct
     human approvers, neither of them the requester (FR-022 semantics,
     consumed here as a library; F10 builds the API surface). Tier 4 is
-    admissible ONLY with explicit human sign-off AND manual initiation:
-    no production automation may carry a harness patch to promotion.
+    admissible ONLY with the human-evidence legs (G7): explicit human
+    sign-off AND manual initiation — no production automation may carry
+    a harness or scaffold patch to promotion. The two-person rule at
+    tier 4 is the review board's to enforce: it only admits a request
+    that carries two distinct approve decisions.
 
     Raises:
         TierRejectedError: the tier's approval evidence is missing or
@@ -178,9 +188,12 @@ def assert_phase2_admissible(
         return
     approval = evidence or TierApprovalEvidence()
     if tier is AuthorityTier.TIER_3:
-        _require_two_person_approval(approval)
+        _require_two_person_approval(approval, tier)
         return
-    # Tier 4: human sign-off and manual initiation, both or nothing.
+    # Tier 4: the full evidence chain, every leg or nothing. The
+    # human-evidence legs are judged first — with no evidence at all the
+    # refusal names the chain that makes tier 4 tier 4, before the
+    # shared two-person rule.
     missing: list[str] = []
     if not approval.human_signoff:
         missing.append("explicit human sign-off")
@@ -192,29 +205,32 @@ def assert_phase2_admissible(
             "harness/runtime patches require human sign-off and manual "
             "initiation — missing: " + ", ".join(missing),
         )
+    # The two-person rule for tier 4 is enforced by the review board's
+    # decision flow (two distinct approve decisions on the request), not
+    # re-checked here — the gate judges the human-evidence legs.
 
 
-def _require_two_person_approval(approval: TierApprovalEvidence) -> None:
-    """Enforce FR-022 two-person semantics on tier-3 approval evidence."""
+def _require_two_person_approval(approval: TierApprovalEvidence, tier: AuthorityTier) -> None:
+    """Enforce FR-022 two-person semantics on tier-3/4 approval evidence."""
     if len(approval.approvers) != 2:
         raise TierRejectedError(
-            int(AuthorityTier.TIER_3),
-            "tier-3 promotion requires two-person approval — "
+            int(tier),
+            f"tier-{int(tier)} promotion requires two-person approval — "
             f"got {len(approval.approvers)} approver(s)",
         )
     first, second = approval.approvers[0], approval.approvers[1]
     if first.casefold() == second.casefold():
         raise TierRejectedError(
-            int(AuthorityTier.TIER_3),
+            int(tier),
             f"two-person approval requires distinct approvers — both named {first!r}",
         )
     if approval.requested_by is not None and any(
         a.casefold() == approval.requested_by.casefold() for a in approval.approvers
     ):
         raise TierRejectedError(
-            int(AuthorityTier.TIER_3),
+            int(tier),
             f"requester {approval.requested_by!r} cannot approve their own "
-            "tier-3 promotion (self-approval refused)",
+            f"tier-{int(tier)} promotion (self-approval refused)",
         )
 
 

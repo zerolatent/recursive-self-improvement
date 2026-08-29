@@ -108,22 +108,35 @@ class _RecordingExecutor:
 
 
 def test_cas_action_kinds_need_no_extra_execution() -> None:
-    assert (
-        frozenset(
-            {
-                CompensationActionKind.RESTORE_PRIOR_RELEASE_POINTER,
-                CompensationActionKind.REVOKE_ARTIFACT,
-            }
-        )
-        == CAS_ACTION_KINDS
-    )
+    assert frozenset(
+        {
+            CompensationActionKind.RESTORE_PRIOR_RELEASE_POINTER,
+            CompensationActionKind.REVOKE_ARTIFACT,
+        }
+    ) == CAS_ACTION_KINDS - {CompensationActionKind.RESTORE_SCAFFOLD_SOURCE}
     assert classification_for_action("restore_prior_release_pointer") == CAS_MODE
     assert classification_for_action("revoke_artifact") == CAS_MODE
 
 
+def test_scaffold_restore_is_cas_and_conformance_rerun_requires_execution() -> None:
+    """G8: the scaffold-source restore is CAS — the registry's digest-verified
+    read is its own evidence — while the conformance rerun must be executed
+    and evidenced like any externally declared hook."""
+    assert CompensationActionKind.RESTORE_SCAFFOLD_SOURCE in CAS_ACTION_KINDS
+    assert classification_for_action("restore_scaffold_source") == CAS_MODE
+    assert CompensationActionKind.RERUN_CONFORMANCE_SUITE in REQUIRES_EXECUTION_ACTION_KINDS
+    assert classification_for_action("rerun_conformance_suite") == REQUIRES_EXECUTION_MODE
+
+
 def test_run_compensation_hook_requires_execution() -> None:
     assert (
-        frozenset({CompensationActionKind.RUN_COMPENSATION_HOOK}) == REQUIRES_EXECUTION_ACTION_KINDS
+        frozenset(
+            {
+                CompensationActionKind.RUN_COMPENSATION_HOOK,
+                CompensationActionKind.RERUN_CONFORMANCE_SUITE,
+            }
+        )
+        == REQUIRES_EXECUTION_ACTION_KINDS
     )
     assert classification_for_action("run_compensation_hook") == REQUIRES_EXECUTION_MODE
 

@@ -71,6 +71,7 @@ from evoruntime.core.principal import Principal
 from evoruntime.db.base import session_scope
 from evoruntime.db.models.approvals import (
     DECISION_KINDS,
+    PROMOTION_REQUEST_KINDS,
     REQUEST_KINDS,
     AdmissionRecord,
     ApprovalDecision,
@@ -99,6 +100,7 @@ from evoruntime.selection.authority import (
     resolve_authority_tier,
 )
 from evoruntime.selection.errors import TierRejectedError
+from evoruntime.tenancy.policy import TenantPolicyRegistry
 
 _DIGEST_PREFIX = "sha256:"
 
@@ -122,10 +124,17 @@ def promotion_body(
     tier: int,
     requested_by: str,
     approvers: tuple[str, ...],
+    kind: str = "tier3_promotion",
 ) -> bytes:
-    """Canonical bytes a tier-3 promotion record's signature covers."""
+    """Canonical bytes a promotion record's signature covers.
+
+    G7: ``kind`` distinguishes the tier-3 and tier-4 promotion kinds —
+    the tier-4 record is signed over the same fields but its kind names
+    the scaffold-class promotion it attests, so a tier-3 record can never
+    be re-presented as a tier-4 admission (or vice versa).
+    """
     body = {
-        "kind": "tier3_promotion",
+        "kind": kind,
         "request_id": request_id,
         "proposal_digest": proposal_digest,
         "tier": tier,
@@ -158,10 +167,17 @@ class ApprovalWorkflowService:
         *,
         signing_key: Ed25519PrivateKey,
         evaluator_subject: str,
+        tenant_policies: TenantPolicyRegistry | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._signing_key = signing_key
         self._evaluator_subject = evaluator_subject
+        # G7: the per-environment approval defaults (G6's policy plane).
+        # An empty registry means every tenant resolves to the production
+        # default — the conservative reading: tier 4 stays closed.
+        self._tenant_policies = (
+            tenant_policies if tenant_policies is not None else TenantPolicyRegistry()
+        )
 
     # ------------------------------------------------------------------
     # Requests
@@ -178,9 +194,18 @@ class ApprovalWorkflowService:
         plugin_id: str | None = None,
         content_digest: str | None = None,
         privileged_role: str | None = None,
+        human_signoff: bool = False,
+        manually_initiated: bool = False,
     ) -> ApprovalRequestDetail:
         """Open a review-board request and compute the tier it will be
-        judged at."""
+        judged at.
+
+        G7: a ``tier4_promotion`` request additionally records the two
+        non-approver evidence legs at creation — ``human_signoff`` and
+        ``manually_initiated``. They are immutable once persisted (the
+        migration's evidence guard), so a request opened without them can
+        never grow the legs after the fact.
+        """
         if kind not in REQUEST_KINDS:
             kinds = ", ".join(REQUEST_KINDS)
             raise InvalidSpecError(f"request kind {kind!r} must be one of {kinds}")
@@ -188,6 +213,11 @@ class ApprovalWorkflowService:
             raise InvalidSpecError("justification must be a non-empty rationale")
 
         if kind == "privileged_admission":
+            if human_signoff or manually_initiated:
+                raise InvalidSpecError(
+                    "human_signoff and manually_initiated are tier-4 evidence legs — "
+                    "a privileged-admission request is not judged on them"
+                )
             tier = self._require_privileged_target(
                 plugin_id=plugin_id,
                 content_digest=content_digest,
@@ -200,14 +230,24 @@ class ApprovalWorkflowService:
         else:
             if plugin_id is not None or content_digest is not None or privileged_role is not None:
                 raise InvalidSpecError(
-                    "a tier-3 promotion request does not target a plugin — use "
+                    "a promotion request does not target a plugin — use "
                     "kind='privileged_admission' for plugin admissions"
                 )
             if campaign_id is None or proposal_id is None:
-                raise InvalidSpecError(
-                    "a tier-3 promotion request requires campaign_id and proposal_id"
-                )
+                raise InvalidSpecError("a promotion request requires campaign_id and proposal_id")
             tier = self._proposal_tier(principal, campaign_id, proposal_id)
+            if kind == "tier4_promotion":
+                self._require_tier4_admissible(
+                    principal,
+                    tier,
+                    human_signoff=human_signoff,
+                    manually_initiated=manually_initiated,
+                )
+            elif human_signoff or manually_initiated:
+                raise InvalidSpecError(
+                    "human_signoff and manually_initiated are tier-4 evidence legs — "
+                    "a tier-3 promotion request is not judged on them"
+                )
 
         request_id = new_id("apr")
         with session_scope(self._session_factory) as session:
@@ -224,6 +264,8 @@ class ApprovalWorkflowService:
                     tier=tier,
                     justification=justification,
                     requested_by=principal.identity_id,
+                    human_signoff=human_signoff,
+                    manually_initiated=manually_initiated,
                     status="pending",
                 )
             )
@@ -305,6 +347,54 @@ class ApprovalWorkflowService:
             return [_request_view(row) for row in rows]
 
     # ------------------------------------------------------------------
+
+    def _require_tier4_admissible(
+        self,
+        principal: Principal,
+        tier: int,
+        *,
+        human_signoff: bool,
+        manually_initiated: bool,
+    ) -> None:
+        """G7 — refuse a tier-4 request that cannot carry the full chain.
+
+        Three refusals, each typed at the boundary where it is knowable:
+
+        - the candidate must actually resolve to tier 4 (a scaffold-class
+          promotion opened as ``tier4_promotion`` when the E4 engine says
+          tier 3 is a vocabulary error, not a weaker request);
+        - the tenant's per-environment approval defaults (G6's policy
+          plane) must allow tier 4 at all — production tenants cannot
+          open tier-4 requests no matter what evidence they attach;
+        - both non-approver evidence legs must already be present, since
+          the columns are immutable once persisted.
+        """
+        if tier != 4:
+            raise InvalidSpecError(
+                f"candidate resolves to tier {tier}, not 4 — open a "
+                f"tier3_promotion request for this candidate"
+            )
+        policy = self._tenant_policies.policy_for(principal.tenant_id)
+        if policy is None or not policy.allows_tier(4):
+            raise ApprovalDeniedError(
+                "tier4_environment_refused",
+                "this tenant's approval policy does not allow tier-4 promotions — "
+                "tier-4 requests require a tier-4-allowing policy document (G7)",
+            )
+        if not (human_signoff and manually_initiated):
+            missing = [
+                name
+                for name, value in (
+                    ("human_signoff", human_signoff),
+                    ("manually_initiated", manually_initiated),
+                )
+                if not value
+            ]
+            raise InvalidSpecError(
+                "a tier-4 promotion request requires the full evidence chain at "
+                f"creation; missing: {', '.join(missing)} (G7)"
+            )
+
     # Decisions
     # ------------------------------------------------------------------
 
@@ -440,6 +530,21 @@ class ApprovalWorkflowService:
                     "review_rejected",
                     f"request {request_id} was rejected by the review board",
                 )
+            if request.status != "approved" and request.kind == "tier4_promotion":
+                # The projection only marks a request approved once two
+                # DISTINCT verified approvers have signed off — this is
+                # where the two-person rule binds a tier-4 promotion (the
+                # tier gate judges the human-evidence legs, not the
+                # approver count).
+                raise ApprovalDeniedError(
+                    "review_not_approved",
+                    f"request {request_id} does not yet carry two distinct "
+                    "approvals — admission requires an approved review",
+                )
+            # A tier-3 request that is not yet approved falls through to
+            # the Phase 2 gate below, which refuses with the tier-bearing
+            # error the FR-022 contract promises (the 403 body names the
+            # tier that was asked for).
             decisions = self._request_decisions(session, principal.tenant_id, request_id)
             approvals = [
                 ApprovalRecord(
@@ -467,11 +572,20 @@ class ApprovalWorkflowService:
                     str(request.proposal_id),
                 )
                 proposal_digest = proposal.proposed_digest
+                # G7: the tier-4 legs ride the same evidence object the
+                # Phase 2 gate already consumes — the two-person rule and
+                # the non-approver legs are one admissibility check, not
+                # two. The legs were frozen at request creation (the
+                # migration's evidence guard), so what is judged here is
+                # exactly what was recorded when the request was opened.
                 try:
                     assert_phase2_admissible(
                         AuthorityTier(request.tier),
                         TierApprovalEvidence(
-                            approvers=approver_ids, requested_by=request.requested_by
+                            approvers=approver_ids,
+                            requested_by=request.requested_by,
+                            human_signoff=request.human_signoff,
+                            manually_initiated=request.manually_initiated,
                         ),
                     )
                 except TierRejectedError as exc:
@@ -484,6 +598,7 @@ class ApprovalWorkflowService:
                     tier=request.tier,
                     requested_by=request.requested_by,
                     approvers=approver_ids,
+                    kind=request.kind,
                 )
                 detached = sign(self._signing_key, body)
                 signature, public_key = detached.signature, detached.public_key
@@ -725,6 +840,8 @@ def _request_view(row: ApprovalRequest) -> ApprovalRequestView:
         tier=row.tier,
         justification=row.justification,
         requested_by=row.requested_by,
+        human_signoff=row.human_signoff,
+        manually_initiated=row.manually_initiated,
         status=row.status,
         created_at=row.created_at,
     )
@@ -789,12 +906,13 @@ def verify_admission_signature(
     """Verify a stored admission record's signature against its body.
 
     For privileged admissions the body is the FR-022 record's canonical
-    unsigned bytes; for tier-3 promotions it is the canonical promotion
-    body. False means the record no longer vouches for an admission
-    anyone made — tampering, not a soft failure.
+    unsigned bytes; for tier-3/4 promotions it is the canonical promotion
+    body (the kind is part of the signed bytes, so a tier-3 record can
+    never verify as a tier-4 admission). False means the record no longer
+    vouches for an admission anyone made — tampering, not a soft failure.
     """
     detached = DetachedSignature(signature=row.signature, public_key=row.signer_public_key)
-    if row.kind == "tier3_promotion":
+    if row.kind in PROMOTION_REQUEST_KINDS:
         approvers = tuple(
             str(item.get("approver", "")) for item in row.approvals if isinstance(item, dict)
         )
@@ -804,6 +922,7 @@ def verify_admission_signature(
             tier=int(row.tier or 0),
             requested_by=row.requested_by,
             approvers=approvers,
+            kind=row.kind,
         )
         return verify(detached, body)
     if request is None:

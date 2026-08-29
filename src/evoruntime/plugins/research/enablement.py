@@ -5,9 +5,11 @@ signal across iterations. That is only sound where the fitness signal is
 an **externally executable correctness check**: the candidate runs in
 the sandbox and the harness renders a pass/fail verdict from observed
 behavior. On the Phase 2 executable classes (``workflow_graph``,
-``tool_spec``, ``skill_script``, ``algorithm``, ``harness_patch``) the
-correctness oracle is exactly that — sandboxed execution against pinned
-evaluators (F1/F6). On the Phase 1 text classes (``prompt_bundle``,
+``tool_spec``, ``skill_script``, ``algorithm``, ``harness_patch``) and the
+Phase 3 scaffold class (``scaffold``, G1 — self-edit conformance runs the
+mutated tree against its pinned suite in the sandbox) the correctness
+oracle is exactly that — sandboxed execution against pinned evaluators
+(F1/F6). On the Phase 1 text classes (``prompt_bundle``,
 ``memory_entry``, ...) there is no external oracle: quality is judged by
 models or humans, and a search loop pointed at a subjective judge
 optimizes the judge, not the artifact.

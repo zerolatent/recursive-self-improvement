@@ -12,8 +12,9 @@ Four record types back the review-board API:
   workload identity of the caller, never a request field.
 - ``admission_records`` — the signed, read-only outcome of an admission:
   either an FR-022 privileged-plugin admission (signature produced by
-  :func:`evoruntime.plugins.privileged.admit_privileged`) or a tier-3
-  promotion attestation signed by the evaluation plane's key.
+  :func:`evoruntime.plugins.privileged.admit_privileged`) or a tier-3/4
+  promotion attestation signed by the evaluation plane's key (tier 4 is
+  G7's scaffold-class promotion kind, judged on the full evidence chain).
 - ``compensation_plans`` — the F5 record type's read surface: a signed,
   append-only plan of per-artifact compensating actions (CAS or
   requires-execution) that gates promotion. F10 ships the record type
@@ -38,8 +39,15 @@ from evoruntime.db.base import Base
 
 #: Request kinds. A privileged-admission request targets a plugin at a
 #: pinned digest (FR-022); a tier3-promotion request targets a campaign
-#: candidate whose resolved tier the E4 engine computed at creation.
-REQUEST_KINDS = ("privileged_admission", "tier3_promotion")
+#: candidate whose resolved tier the E4 engine computed at creation; a
+#: tier4-promotion request (G7) targets a scaffold-class candidate and
+#: additionally records the human_signoff / manually_initiated evidence
+#: legs its admission is judged on.
+REQUEST_KINDS = ("privileged_admission", "tier3_promotion", "tier4_promotion")
+
+#: The promotion request kinds that target a campaign candidate (as
+#: opposed to the plugin-targeting privileged_admission kind).
+PROMOTION_REQUEST_KINDS = ("tier3_promotion", "tier4_promotion")
 
 #: Request lifecycle. ``approved`` means two distinct verified approvals
 #: are on record; ``admitted`` means the signed record has been minted.
@@ -71,6 +79,13 @@ class ApprovalRequest(Base):
     tier: Mapped[int] = mapped_column(nullable=False)
     justification: Mapped[str] = mapped_column(nullable=False)
     requested_by: Mapped[str] = mapped_column(nullable=False)
+    human_signoff: Mapped[bool] = mapped_column(nullable=False, default=False)
+    """G7 tier-4 evidence leg: explicit human sign-off was recorded when
+    the request was opened. Immutable after creation (the migration's
+    evidence guard trigger refuses any UPDATE that touches it)."""
+    manually_initiated: Mapped[bool] = mapped_column(nullable=False, default=False)
+    """G7 tier-4 evidence leg: a human, not production automation, opened
+    this request. Immutable after creation, like ``human_signoff``."""
     status: Mapped[str] = mapped_column(nullable=False, default="pending")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -81,7 +96,7 @@ class ApprovalRequest(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('privileged_admission', 'tier3_promotion')",
+            "kind IN ('privileged_admission', 'tier3_promotion', 'tier4_promotion')",
             name="ck_approval_requests_kind",
         ),
         CheckConstraint(
@@ -161,7 +176,7 @@ class AdmissionRecord(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('privileged_admission', 'tier3_promotion')",
+            "kind IN ('privileged_admission', 'tier3_promotion', 'tier4_promotion')",
             name="ck_admission_records_kind",
         ),
         Index("ix_admission_records_tenant_request", "tenant_id", "request_id"),

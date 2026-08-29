@@ -75,6 +75,19 @@ class ArmKind(StrEnum):
     one member, a workflow minus one step), so the comparison is paired on
     tasks, never on artifact shape."""
 
+    FIXED_EDITOR = "fixed-editor"
+    """The incumbent scaffold evaluated under the frozen editor (Phase 3,
+    G4): the strategy plugin pinned at its incumbent-generation version, so
+    the campaign's mutated candidates are compared against the *same*
+    optimizer that produced the incumbent line — not against nothing. This
+    is the control the §12.6 RI-3/RI-4 recursive-claim condition is judged
+    on: a numeric advantage over this arm, above the preregistered minimum
+    effect and inside the shared Holm family, is the only optimizer-attributable
+    signal a scaffold campaign can produce. The frozen editor must be named
+    (`Arm.editor_ref`), and a scaffold-mutable campaign spec is invalid
+    without exactly one of these arms — an optimizer compared only against
+    a static incumbent could claim the editor's own gains as recursion."""
+
 
 @dataclass(frozen=True, slots=True)
 class Arm:
@@ -94,6 +107,12 @@ class Arm:
     an ABLATION arm; must be None for every other kind, so a component id
     on a non-ablation arm is a spec bug that surfaces at construction."""
 
+    editor_ref: str | None = None
+    """The frozen editor this arm evaluates under. Required for (and only
+    meaningful to) a FIXED_EDITOR arm, mirroring the ABLATION
+    `component_id`-only pattern: an unnamed editor is not a control, and an
+    editor ref on any other arm is a spec bug that surfaces at construction."""
+
     def __post_init__(self) -> None:
         if not self.id:
             raise ExperimentDefinitionError("arm id must be non-empty")
@@ -106,6 +125,17 @@ class Arm:
             raise ExperimentDefinitionError(
                 f"arm {self.id!r}: component_id is only meaningful on an "
                 f"{ArmKind.ABLATION.value} arm, got {self.component_id!r}"
+            )
+        if self.kind is ArmKind.FIXED_EDITOR:
+            if not self.editor_ref:
+                raise ExperimentDefinitionError(
+                    f"arm {self.id!r}: a fixed-editor arm must name the frozen "
+                    "editor it evaluates under (editor_ref)"
+                )
+        elif self.editor_ref is not None:
+            raise ExperimentDefinitionError(
+                f"arm {self.id!r}: editor_ref is only meaningful on a "
+                f"{ArmKind.FIXED_EDITOR.value} arm, got {self.editor_ref!r}"
             )
         if self.max_attempts < 1:
             raise ExperimentDefinitionError(
@@ -127,6 +157,11 @@ class Arm:
         """Build an ablation arm that removes one named component."""
         return cls(id=arm_id, kind=ArmKind.ABLATION, component_id=component_id)
 
+    @classmethod
+    def fixed_editor(cls, arm_id: str, editor_ref: str) -> Arm:
+        """Build a fixed-editor arm that evaluates under one frozen editor."""
+        return cls(id=arm_id, kind=ArmKind.FIXED_EDITOR, editor_ref=editor_ref)
+
     @property
     def ablated_component(self) -> str:
         """The component this arm removes, narrowed to `str`.
@@ -139,6 +174,19 @@ class Arm:
                 f"arm {self.id!r}: not an ablation arm, no component to ablate"
             )
         return self.component_id
+
+    @property
+    def editor_reference(self) -> str:
+        """The frozen editor this arm evaluates under, narrowed to `str`.
+
+        Arm validation guarantees a FIXED_EDITOR arm carries an editor ref;
+        this gives callers a `str` without re-checking or casting.
+        """
+        if self.editor_ref is None:
+            raise ExperimentDefinitionError(
+                f"arm {self.id!r}: not a fixed-editor arm, no editor to freeze"
+            )
+        return self.editor_ref
 
 
 @dataclass(frozen=True, slots=True)

@@ -163,3 +163,81 @@ def test_gate_refuses_blocked_candidate_pre_execution() -> None:
     assert any(
         v.code is AnalysisViolationCode.NETWORK_IMPORT for v in excinfo.value.report.violations
     )
+
+
+# --- Phase 3 (G2): the protected-modules deny-list at the execution gate ---
+
+
+def test_gate_refuses_an_explicit_attempt_to_mutate_an_evaluator_module() -> None:
+    """The gate refuses a candidate that rewrites the runtime's own policy module."""
+    files = (
+        {"path": "scripts/apply.py", "content": "RULES = {'tool_use': 'file tools'}\n"},
+        {
+            "path": "src/evoruntime/security/policy.py",
+            "content": "EVALUATOR_ROLE = 'candidate'\n",
+        },
+    )
+    report = analyze_files(files, masks=MASK, artifact_type="skill_package")
+    gate = StaticAnalysisGate(lambda: report)
+    with pytest.raises(StaticAnalysisBlockedError) as excinfo:
+        gate.approve_execution()
+    codes = {v.code for v in excinfo.value.report.violations}
+    assert AnalysisViolationCode.PROTECTED_MODULE_WRITE in codes
+
+
+def test_gate_refuses_a_candidate_importing_a_protected_module() -> None:
+    files = ({"path": "scripts/apply.py", "content": "from evoruntime.security.egress import x\n"},)
+    report = analyze_files(files, masks=MASK, artifact_type="skill_package")
+    gate = StaticAnalysisGate(lambda: report)
+    with pytest.raises(StaticAnalysisBlockedError) as excinfo:
+        gate.approve_execution()
+    codes = {v.code for v in excinfo.value.report.violations}
+    assert AnalysisViolationCode.PROTECTED_MODULE_IMPORT in codes
+
+
+def test_protected_refusal_verdict_is_tamper_evident() -> None:
+    """The refusal verdict's digest binds its canonical bytes and signs."""
+    files = (
+        {"path": "scripts/apply.py", "content": "RULES = {'tool_use': 'file tools'}\n"},
+        {
+            "path": "src/evoruntime/security/policy.py",
+            "content": "EVALUATOR_ROLE = 'candidate'\n",
+        },
+    )
+    report = analyze_files(files, masks=MASK, artifact_type="skill_package")
+    assert report.blocked
+
+    digest = report.verdict_digest
+    detached = sign(Ed25519PrivateKey.generate(), report.canonical_bytes())
+    assert verify(detached, report.canonical_bytes())
+
+    # A re-labeled verdict — protected write downgraded to a warning —
+    # produces different canonical bytes and a different digest.
+    relabeled = StaticAnalysisReport(
+        candidate_digest=report.candidate_digest,
+        artifact_type=report.artifact_type,
+        violations=tuple(
+            AnalysisViolation(
+                code=v.code,
+                severity=Severity.WARNING,
+                path=v.path,
+                detail=v.detail,
+                line=v.line,
+            )
+            for v in report.violations
+        ),
+    )
+    assert relabeled.verdict_digest != digest
+
+
+def test_protected_refusal_is_deterministic_for_the_same_candidate() -> None:
+    files = (
+        {"path": "scripts/apply.py", "content": "RULES = {'tool_use': 'file tools'}\n"},
+        {
+            "path": "src/evoruntime/security/policy.py",
+            "content": "EVALUATOR_ROLE = 'candidate'\n",
+        },
+    )
+    first = analyze_files(files, masks=MASK, artifact_type="skill_package")
+    second = analyze_files(files, masks=MASK, artifact_type="skill_package")
+    assert first.verdict_digest == second.verdict_digest

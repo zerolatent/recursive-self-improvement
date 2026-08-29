@@ -19,6 +19,8 @@ from evoruntime.sandbox.executor import (
     physical_enforcement_available,
 )
 from evoruntime.sandbox.profile import (
+    CapturedPayload,
+    CaptureError,
     EgressDenial,
     EnforcementRecord,
     ExecutionAttestation,
@@ -30,10 +32,13 @@ from evoruntime.sandbox.profile import (
     PayloadRef,
     SandboxError,
     StagingError,
+    TierEnforcement,
 )
 from evoruntime.sandbox.staging import PayloadReader, StagedWorkspace
 
 __all__ = [
+    "CapturedPayload",
+    "CaptureError",
     "EgressBrokerProxy",
     "EgressDenial",
     "EnforcementRecord",
@@ -51,5 +56,6 @@ __all__ = [
     "StagedWorkspace",
     "StagingError",
     "SubprocessIsolationBackend",
+    "TierEnforcement",
     "physical_enforcement_available",
 ]

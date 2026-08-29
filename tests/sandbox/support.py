@@ -37,6 +37,7 @@ def make_request(
     payloads: tuple[PayloadRef, ...],
     command: tuple[str, ...],
     image_digest: str = "ghcr.io/acme/candidate@sha256:" + "cd" * 32,
+    capture_paths: tuple[str, ...] = (),
 ) -> ExecutionRequest:
     return ExecutionRequest(
         tenant_id=TENANT,
@@ -44,6 +45,7 @@ def make_request(
         profile=profile,
         payloads=payloads,
         command=command,
+        capture_paths=capture_paths,
     )
 
 

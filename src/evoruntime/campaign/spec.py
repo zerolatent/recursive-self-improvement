@@ -16,15 +16,19 @@ bytes and signs them with the evaluator's Ed25519 key. The orchestrator
 spec whose digest and signature still verify — a spec edited after the
 fact is not a preregistration, it is a forgery of one.
 
-**Schema v2 (Phase 2, F4) and the v1 migration window.** The singular
-`mutable_artifact` became a `MutableArtifactSet` (>= 1 masked artifacts,
-one primary matching the incumbent). v1 documents are accepted until
-`V1_MIGRATION_WINDOW_END` (2026-10-27, sixty days after the Phase 2
-release branch was cut on 2026-08-28 — see ``docs/campaign-spec-v2.md``);
-they are upgraded to the v2 shape at parse time, so a v1 document and the
-equivalent v2 document pin to the *same* digest. After the window closes
-v1 specs are rejected: the window is for authoring migration, not a
-permanent dual-format license.
+**Schema v3 (Phase 3, G3) and the dated migration windows.** v2 (F4)
+made the mutation surface a `MutableArtifactSet`; v3 adds the scaffold
+mutation research surface: a mutable set may contain the SCAFFOLD class,
+and when it does the spec must declare `environment: research` and pin a
+non-empty `mutation_classes` section (per-class risk-dossier digest and
+isolation tier). Older documents are accepted only inside dated windows —
+v1 until `V1_MIGRATION_WINDOW_END` (2026-10-27) and v2 until
+`V2_MIGRATION_WINDOW_END` (2026-10-28, sixty days after the Phase 3
+release branch was cut on 2026-08-29 — see ``docs/campaign-spec-v3.md``)
+— and are upgraded to the v3 shape at parse time, so a v1 or v2 document
+and the equivalent v3 document pin to the *same* digest. After a window
+closes, its version is refused: the window is for authoring migration,
+not a permanent dual-format license.
 
 **The holdout is a handle, never content.** Dataset bindings reference the
 holdout through the D5 sealed-handle scheme (`holdout://...`). A spec that
@@ -41,7 +45,11 @@ from datetime import date
 from typing import Any, Protocol
 
 from evoruntime.campaign.compensation import CompensationActionKind
-from evoruntime.campaign.errors import InvalidCampaignSpecError
+from evoruntime.campaign.errors import (
+    InvalidCampaignSpecError,
+    ScaffoldEnvironmentRefusedError,
+)
+from evoruntime.core.isolation import IsolationTier
 from evoruntime.datasets.partitions import HOLDOUT_HANDLE_SCHEME
 from evoruntime.eval.budgets import resolve_budget_profile
 from evoruntime.eval.cascade import EvaluatorCostClass
@@ -49,9 +57,11 @@ from evoruntime.eval.errors import UnknownBudgetProfileError
 from evoruntime.eval.experiment import Arm, ArmKind
 from evoruntime.eval.statistics import MIN_BOOTSTRAP_ITERATIONS, MultiplicityMethod
 from evoruntime.plugins.manifest import PluginArtifactType
+from evoruntime.security.protected_modules import ProtectedModulesDocument
 from evoruntime.security.signing import DetachedSignature, sign, verify
+from evoruntime.tenancy.environment import TenantEnvironment, is_scaffold_class
 
-SUPPORTED_SPEC_VERSION = 2
+SUPPORTED_SPEC_VERSION = 3
 """The campaign-spec schema version this runtime understands.
 
 A spec carries its version explicitly so a shape change is a refusal with
@@ -67,9 +77,32 @@ pins to the v2 digest; after it, v1 specs are refused. Documented in
 ``docs/campaign-spec-v2.md``.
 """
 
+V2_MIGRATION_WINDOW_END = date(2026, 10, 28)
+"""Last day `schema_version: 2` campaign specs are accepted.
+
+Sixty days after the Phase 3 release branch was cut (2026-08-29). Until
+this date a v2 document is upgraded to the v3 shape at parse time and
+pins to the v3 digest; after it, v2 specs are refused. Documented in
+``docs/campaign-spec-v3.md``.
+"""
+
 _DIGEST_PREFIX = "sha256:"
 
 _HOLDOUT_HANDLE_PREFIX = f"{HOLDOUT_HANDLE_SCHEME}://"
+
+
+def _is_admissible_artifact_type(value: str) -> bool:
+    """True for every artifact class a spec may name (Phase 3, G6).
+
+    The Phase 1/2 classes plus the scaffold-mutation research class
+    (``scaffold`` — G1 lands the enum member and its capture machinery;
+    matching by value string keeps this module independent of that PR).
+    Admissible is not approved: a scaffold-class mutable set is refused by
+    :meth:`CampaignSpec._validate_environment` unless the spec pins
+    ``environment: research`` — the class being known to the spec
+    validator is what makes that boundary check reachable.
+    """
+    return value in {t.value for t in PluginArtifactType} or is_scaffold_class(value)
 
 
 def _require_digest(value: str, what: str) -> str:
@@ -103,9 +136,9 @@ class IncumbentBinding:
 
     def __post_init__(self) -> None:
         _require_digest(self.release_manifest_digest, "incumbent release manifest digest")
-        if self.artifact_type not in {t.value for t in PluginArtifactType}:
+        if not _is_admissible_artifact_type(self.artifact_type):
             raise InvalidCampaignSpecError(
-                f"incumbent artifact_type {self.artifact_type!r} is not a Phase 1 artifact class"
+                f"incumbent artifact_type {self.artifact_type!r} is not a known artifact class"
             )
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -130,9 +163,9 @@ class MutableArtifact:
     paths: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if self.artifact_type not in {t.value for t in PluginArtifactType}:
+        if not _is_admissible_artifact_type(self.artifact_type):
             raise InvalidCampaignSpecError(
-                f"mutable artifact_type {self.artifact_type!r} is not a Phase 1 artifact class"
+                f"mutable artifact_type {self.artifact_type!r} is not a known artifact class"
             )
         if not self.paths:
             raise InvalidCampaignSpecError(
@@ -141,6 +174,20 @@ class MutableArtifact:
             )
         for path in self.paths:
             _validate_mask_path(path)
+        # Phase 3 (G2): the protected-modules deny-list bounds the mutation
+        # mask at spec construction — fail before search, not at the gate.
+        # A mask that names a path under a protected root is not a narrower
+        # campaign, it is a preregistered attempt to mutate a protected plane.
+        protected = ProtectedModulesDocument.default()
+        for path in self.paths:
+            protected_root = protected.covers_path(path)
+            if protected_root is not None:
+                raise InvalidCampaignSpecError(
+                    f"mutable path {path!r} maps under the protected module "
+                    f"{protected_root} ({protected.reason_for(protected_root)}) — "
+                    "the protected-modules deny-list bounds the mutation mask, "
+                    "and a spec that names a protected path is refused before search"
+                )
 
     def to_canonical_dict(self) -> dict[str, Any]:
         """Canonical JSON form of this artifact binding."""
@@ -181,6 +228,50 @@ class MutableArtifactSet:
         return [artifact.to_canonical_dict() for artifact in self.artifacts]
 
 
+@dataclass(frozen=True, slots=True)
+class MutationClassBinding:
+    """One declared mutation class with its pinned risk dossier (G3).
+
+    Scaffold mutation is not a free-for-all: the campaign declares up
+    front *which classes* of change its strategy may propose (e.g.
+    ``prompt_module_edit``, ``tool_use_rewrite``, ``control_flow_change``),
+    each bound to the signed risk dossier that justifies it and the
+    isolation tier the class demands. The digest pins the dossier — a
+    class whose dossier changes is a different preregistration — and G10
+    consumes the binding when a class graduates out of research.
+    """
+
+    class_id: str
+    risk_dossier_digest: str
+    max_tier: IsolationTier
+
+    def __post_init__(self) -> None:
+        if not self.class_id or self.class_id != self.class_id.strip():
+            raise InvalidCampaignSpecError(
+                f"mutation class_id must be non-empty and trimmed, got {self.class_id!r}"
+            )
+        _require_digest(
+            self.risk_dossier_digest,
+            f"mutation class {self.class_id!r} risk_dossier_digest",
+        )
+        if not isinstance(self.max_tier, IsolationTier):
+            try:
+                object.__setattr__(self, "max_tier", IsolationTier(self.max_tier))
+            except ValueError as exc:
+                raise InvalidCampaignSpecError(
+                    f"mutation class {self.class_id!r} max_tier {self.max_tier!r} is not "
+                    f"an isolation tier (one of {', '.join(t.value for t in IsolationTier)})"
+                ) from exc
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        """Canonical JSON form of this binding."""
+        return {
+            "class_id": self.class_id,
+            "risk_dossier_digest": self.risk_dossier_digest,
+            "max_tier": self.max_tier.value,
+        }
+
+
 def _validate_mask_path(path: str) -> None:
     if not path or path != path.strip():
         raise InvalidCampaignSpecError(f"mutable path must be non-empty and trimmed: {path!r}")
@@ -214,7 +305,7 @@ class CompensationActionSpec:
     def __post_init__(self) -> None:
         if self.artifact_type not in {t.value for t in PluginArtifactType}:
             raise InvalidCampaignSpecError(
-                f"compensation artifact_type {self.artifact_type!r} is not a Phase 1 artifact class"
+                f"compensation artifact_type {self.artifact_type!r} is not a known artifact class"
             )
         try:
             CompensationActionKind(self.action)
@@ -231,6 +322,35 @@ class CompensationActionSpec:
                     "compensating action"
                 )
             _require_pinned_image(self.hook_image, "compensation hook_image")
+        elif self.action == CompensationActionKind.RERUN_CONFORMANCE_SUITE.value:
+            # G8: the suite this action re-runs is pinned inside the
+            # scaffold's own file map, so the action declares no hook image
+            # of its own — re-declaring one here would create a second pin
+            # that could drift from the oracle the candidate was judged by.
+            if self.hook_image is not None:
+                raise InvalidCampaignSpecError(
+                    "a rerun_conformance_suite action takes no hook_image — the "
+                    "suite pin travels with the scaffold's file map, and a second "
+                    "pin here could disagree with it"
+                )
+            if self.artifact_type != PluginArtifactType.SCAFFOLD.value:
+                raise InvalidCampaignSpecError(
+                    f"a rerun_conformance_suite action targets {self.artifact_type!r}, "
+                    "but only the scaffold class pins a conformance suite — "
+                    "scaffold-specific compensations name the scaffold class"
+                )
+        elif self.action == CompensationActionKind.RESTORE_SCAFFOLD_SOURCE.value:
+            if self.hook_image is not None:
+                raise InvalidCampaignSpecError(
+                    f"compensation action {self.action!r} takes no hook_image — the "
+                    "restore is a digest-verified registry read, not a declared hook"
+                )
+            if self.artifact_type != PluginArtifactType.SCAFFOLD.value:
+                raise InvalidCampaignSpecError(
+                    f"a restore_scaffold_source action targets {self.artifact_type!r}, "
+                    "but only the scaffold class has registry-restorable source — "
+                    "scaffold-specific compensations name the scaffold class"
+                )
         elif self.hook_image is not None:
             raise InvalidCampaignSpecError(
                 f"CAS compensation action {self.action!r} takes no hook_image — "
@@ -256,6 +376,13 @@ class CompensationPlanSection:
     Declared before search like every other pinned section — a rollback
     plan chosen after seeing what broke is not a transaction plan, it is
     an improvisation with a signature.
+
+    One action per artifact class, with one G8 exception: the scaffold
+    rollback is a two-action unit — ``restore_scaffold_source`` followed
+    by ``rerun_conformance_suite`` — because undoing a whole source tree
+    and re-proving the restored tree against its own oracle are two halves
+    of one compensation, and the rerun is only meaningful after the
+    restore.
     """
 
     actions: tuple[CompensationActionSpec, ...]
@@ -269,10 +396,43 @@ class CompensationPlanSection:
             )
         types = [action.artifact_type for action in self.actions]
         duplicates = sorted({t for t in types if types.count(t) > 1})
-        if duplicates:
+        if duplicates and not self._is_scaffold_rollback_pair(duplicates):
             raise InvalidCampaignSpecError(
                 f"duplicate artifact_type in the compensation plan: "
                 f"{', '.join(duplicates)} — one compensating action per artifact"
+            )
+        self._validate_scaffold_rollback_order()
+
+    @staticmethod
+    def _is_scaffold_rollback_pair(duplicates: list[str]) -> bool:
+        """True when the duplicates are exactly the G8 scaffold rollback
+        pair: restore the source, then re-verify the oracle — two actions
+        on one artifact class that compose into a single rollback unit."""
+        return duplicates == [PluginArtifactType.SCAFFOLD.value]
+
+    def _validate_scaffold_rollback_order(self) -> None:
+        """The scaffold rollback pair must be the declared pair, restore
+        first — rerunning the oracle against a tree that has not been
+        restored judges nothing."""
+        scaffold_actions = [
+            action.action
+            for action in self.actions
+            if action.artifact_type == PluginArtifactType.SCAFFOLD.value
+        ]
+        if len(scaffold_actions) < 2:
+            return
+        restore = CompensationActionKind.RESTORE_SCAFFOLD_SOURCE.value
+        rerun = CompensationActionKind.RERUN_CONFORMANCE_SUITE.value
+        if sorted(scaffold_actions) != sorted((restore, rerun)):
+            raise InvalidCampaignSpecError(
+                "the scaffold class carries more than one compensating action — "
+                f"the only allowed pair is {restore!r} followed by {rerun!r}"
+            )
+        if scaffold_actions.index(restore) > scaffold_actions.index(rerun):
+            raise InvalidCampaignSpecError(
+                f"{rerun!r} is declared before {restore!r} — the conformance "
+                "rerun must follow the source restore, or it judges a tree that "
+                "has not been restored yet"
             )
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -578,7 +738,35 @@ class CampaignSpec:
     statistics: StatisticsPlan
     stopping_rules: StoppingRules
     compensation_plan: CompensationPlanSection | None = None
+    mutation_classes: tuple[MutationClassBinding, ...] = ()
+    """The pinned mutation classes (v3): which classes of change the
+    strategy may propose, each bound to its signed risk dossier and the
+    isolation tier it demands. Mandatory (non-empty) for scaffold-mutable
+    campaigns; optional extra preregistration for other campaigns."""
+
     metadata: dict[str, str] = field(default_factory=dict)
+    environment: str | None = None
+    """The environment this campaign declares itself for (G6).
+
+    Absent on every pre-G6 spec. A scaffold-mutable set must declare
+    ``research``; anything else is refused at construction. Unlike the
+    other G6 fields this one is ALWAYS serialized into the canonical
+    form — even when unset — so the digest binds the environment claim
+    (G3): a spec whose environment claim changed after pinning no
+    longer verifies. This deliberate divergence from G6's
+    omit-when-unset convention is v3 behavior, not an accident.
+    """
+    tier4_policy_digest: str | None = None
+    """Digest of the tier-4-allowing seed policy this campaign answers to (G7).
+
+    Required on every scaffold-mutable spec: the promotions of a
+    scaffold-mutation campaign are tier-4 acts, and the policy whose
+    approval defaults admit them is signed policy data
+    (:mod:`evoruntime.tenancy.seed`) whose digest is pinned here — chosen
+    before search begins, like every other part of the preregistration.
+    Refused on non-scaffold specs: a tier-4 pin on a campaign that can
+    never promote at tier 4 governs nothing.
+    """
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "arms", tuple(self.arms))
@@ -592,7 +780,17 @@ class CampaignSpec:
             )
         if not self.name:
             raise InvalidCampaignSpecError("campaign name must be non-empty")
+        object.__setattr__(self, "mutation_classes", tuple(self.mutation_classes))
+        class_ids = [binding.class_id for binding in self.mutation_classes]
+        duplicates = sorted({cid for cid in class_ids if class_ids.count(cid) > 1})
+        if duplicates:
+            raise InvalidCampaignSpecError(
+                f"duplicate class_id in the mutation classes: {', '.join(duplicates)}"
+            )
         self._validate_artifact_consistency()
+        self._validate_environment()
+        self._validate_mutation_classes()
+        self._validate_tier4_policy()
         self._validate_arms()
         self._validate_compensation_plan()
         if not self.evaluators:
@@ -620,6 +818,80 @@ class CampaignSpec:
                 f"the mutable artifact set must contain exactly one artifact of the "
                 f"incumbent's artifact_type {self.incumbent.artifact_type!r} (the "
                 f"primary), found {len(matching)}"
+            )
+
+    def _validate_environment(self) -> None:
+        """G6 boundary 1 — spec construction: scaffold ⇒ research.
+
+        A mutable set containing a scaffold-class artifact is a
+        scaffold-mutation campaign, and scaffold mutation exists only in
+        the research environment. The declared `environment` must say so
+        explicitly — an unspecified environment is not research by
+        default, it is unspecified, and the check refuses it. The
+        artifact-class validators admit scaffold-class values precisely
+        so this check, not an "unknown class" refusal, decides the fate
+        of a scaffold spec.
+        """
+        if self.environment is not None and self.environment not in {
+            e.value for e in TenantEnvironment
+        }:
+            raise InvalidCampaignSpecError(
+                f"environment must be one of {sorted(e.value for e in TenantEnvironment)}, "
+                f"got {self.environment!r}"
+            )
+        if not any(
+            is_scaffold_class(artifact.artifact_type)
+            for artifact in self.mutable_artifacts.artifacts
+        ):
+            return
+        if self.environment != TenantEnvironment.RESEARCH.value:
+            raise ScaffoldEnvironmentRefusedError(
+                "a scaffold-mutable campaign requires environment: research — "
+                "scaffold mutation is refused outside the research tenant (G6)"
+            )
+
+    def _validate_mutation_classes(self) -> None:
+        """Scaffold-mutable campaigns pin their mutation surface (G3).
+
+        A campaign that mutates the SCAFFOLD class is editing the runtime's
+        own source: its mutation surface must be pinned class-by-class
+        before search — an unpinned scaffold mutation surface is not a
+        preregistration, it is an open invitation. The environment claim
+        itself is validated by `_validate_environment` (G6) — one refusal
+        path for the environment, not two.
+        """
+        if not any(
+            is_scaffold_class(artifact.artifact_type)
+            for artifact in self.mutable_artifacts.artifacts
+        ):
+            return
+        if not self.mutation_classes:
+            raise InvalidCampaignSpecError(
+                "a scaffold-mutable campaign must pin its 'mutation_classes' — "
+                "declare each mutation class with its risk_dossier_digest and max_tier"
+            )
+
+    def _validate_tier4_policy(self) -> None:
+        """G7 — a scaffold spec pins the tier-4-allowing policy digest.
+
+        The pin is structural here (present, well-formed, and only on
+        scaffold specs); that it names the *right* policy — the research
+        tenant's signed seed document, which actually allows tier 4 — is
+        a deployment-level fact the control plane verifies at campaign
+        creation against its tenant-policy registry.
+        """
+        if self.has_scaffold_mutable:
+            if self.tier4_policy_digest is None:
+                raise InvalidCampaignSpecError(
+                    "a scaffold-mutable campaign must pin tier4_policy_digest — the "
+                    "digest of the tier-4-allowing seed policy document its promotions "
+                    "are governed by (G7)"
+                )
+            _require_digest(self.tier4_policy_digest, "tier-4 policy digest")
+        elif self.tier4_policy_digest is not None:
+            raise InvalidCampaignSpecError(
+                "tier4_policy_digest is only valid on a scaffold-mutable spec — "
+                "a campaign that cannot promote at tier 4 has no tier-4 policy to pin"
             )
 
     def _validate_arms(self) -> None:
@@ -650,7 +922,30 @@ class CampaignSpec:
                     f"(the three Phase 0 control arms plus the strategy arm), "
                     f"found {kinds.count(kind)}"
                 )
+        self._validate_fixed_editor_arm()
         self._validate_ablation_arms()
+
+    def _validate_fixed_editor_arm(self) -> None:
+        """A scaffold-mutable campaign must carry its fixed-editor arm (G4).
+
+        The fixed-editor arm is the incumbent scaffold evaluated under the
+        frozen editor — the strategy plugin pinned at its
+        incumbent-generation version. Without it, a scaffold campaign's
+        only comparison is against a static incumbent, and the editor's own
+        gains could be claimed as recursion (the §12.6 RI-3/RI-4 condition
+        has no denominator). Same hard-requirement style as the Phase 0
+        control arms: exactly one, refused at construction.
+        """
+        if not self.has_scaffold_mutable:
+            return
+        fixed_editors = [arm for arm in self.arms if arm.kind is ArmKind.FIXED_EDITOR]
+        if len(fixed_editors) != 1:
+            raise InvalidCampaignSpecError(
+                "a scaffold-mutable campaign needs exactly one "
+                f"{ArmKind.FIXED_EDITOR.value} arm (the incumbent scaffold "
+                "evaluated under the frozen editor), found "
+                f"{len(fixed_editors)}"
+            )
 
     def _validate_ablation_arms(self) -> None:
         """Hold every ABLATION arm inside the preregistered family (FR-101).
@@ -696,6 +991,14 @@ class CampaignSpec:
                 )
 
     @property
+    def has_scaffold_mutable(self) -> bool:
+        """True when the mutable set contains a scaffold-class artifact (G6)."""
+        return any(
+            is_scaffold_class(artifact.artifact_type)
+            for artifact in self.mutable_artifacts.artifacts
+        )
+
+    @property
     def mutable_artifact(self) -> MutableArtifact:
         """The primary mutable artifact (the incumbent's class).
 
@@ -734,6 +1037,9 @@ class CampaignSpec:
                     # for every other kind keeps the canonical bytes (and
                     # so the digest) stable for specs that predate F8.
                     **({"component_id": arm.component_id} if arm.component_id is not None else {}),
+                    # editor_ref is a FIXED_EDITOR-only field (G4): same
+                    # omit-when-unset pattern, same digest-stability reason.
+                    **({"editor_ref": arm.editor_ref} if arm.editor_ref is not None else {}),
                 }
                 for arm in self.arms
             ],
@@ -748,7 +1054,21 @@ class CampaignSpec:
                 if self.compensation_plan is not None
                 else None
             ),
+            # v3 fields are always present in the canonical form — None/[]
+            # for documents that predate them — so a v2 document and the
+            # equivalent v3 document pin to the same digest, and a v3 spec
+            # that *declares* the fields has them bound by the signature.
+            "environment": self.environment,
+            "mutation_classes": [binding.to_canonical_dict() for binding in self.mutation_classes],
             "metadata": dict(sorted(self.metadata.items())),
+            # environment is the one deliberate divergence from G6's
+            # omit-when-unset convention (G3): it is always serialized —
+            # None for documents that predate it — so the digest binds
+            # the environment claim.
+            # tier4_policy_digest is a G7 field and follows the same v3
+            # convention: always serialized, None for documents that
+            # predate it, so the tier-4 pin is bound by the signature.
+            "tier4_policy_digest": self.tier4_policy_digest,
         }
 
     def canonical_bytes(self) -> bytes:
@@ -818,6 +1138,11 @@ class CampaignSpec:
                             if "component_id" in arm
                             else None
                         ),
+                        editor_ref=(
+                            _require_str(arm["editor_ref"], "arm editor_ref")
+                            if "editor_ref" in arm
+                            else None
+                        ),
                     )
                     for arm in raw["arms"]
                 ),
@@ -873,6 +1198,21 @@ class CampaignSpec:
                         raw["promotion_policy"]["policy_digest"], "policy digest"
                     ),
                 ),
+                tier4_policy_digest=(
+                    _require_digest(
+                        _require_str(raw["tier4_policy_digest"], "tier-4 policy digest"),
+                        "tier-4 policy digest",
+                    )
+                    # The v3 canonical form always serializes the key —
+                    # None for documents that predate G7 — so both an
+                    # absent key and an explicit null parse to None.
+                    # Structural requirements (mandatory on scaffold specs,
+                    # refused on non-scaffold specs) live in
+                    # _validate_tier4_policy, not here: a pre-G7 document
+                    # must still load.
+                    if raw.get("tier4_policy_digest") is not None
+                    else None
+                ),
                 statistics=StatisticsPlan(
                     alpha=_require_float(raw["statistics"]["alpha"], "alpha"),
                     multiplicity=MultiplicityMethod(
@@ -896,7 +1236,16 @@ class CampaignSpec:
                         "max_no_improvement_rounds",
                     ),
                 ),
+                # v3 canonical forms always carry the environment key —
+                # null for documents that predate the claim (G3) — so an
+                # explicit null parses as absent, not as a type error.
+                environment=(
+                    _require_str(raw["environment"], "environment")
+                    if raw.get("environment") is not None
+                    else None
+                ),
                 compensation_plan=_parse_compensation_plan(raw),
+                mutation_classes=_parse_mutation_classes(raw),
                 metadata={str(k): str(v) for k, v in raw.get("metadata", {}).items()},
             )
         except KeyError as exc:
@@ -944,17 +1293,67 @@ def _parse_compensation_plan(raw: dict[str, Any]) -> CompensationPlanSection | N
     )
 
 
-def _parse_mutable_artifacts(raw: dict[str, Any], schema_version: int) -> MutableArtifactSet:
-    """Parse the mutable artifact set from a v2 mapping, or upgrade a v1 one.
+def _require_isolation_tier(value: Any, what: str) -> IsolationTier:
+    """Validate an isolation-tier name from a spec mapping."""
+    if not isinstance(value, str):
+        raise InvalidCampaignSpecError(f"{what} must be a string, got {value!r}")
+    try:
+        return IsolationTier(value)
+    except ValueError as exc:
+        raise InvalidCampaignSpecError(
+            f"{what} {value!r} is not an isolation tier "
+            f"(one of {', '.join(t.value for t in IsolationTier)})"
+        ) from exc
 
-    v2 documents carry `mutable_artifacts` — an ordered list of
+
+def _parse_mutation_classes(raw: dict[str, Any]) -> tuple[MutationClassBinding, ...]:
+    """Parse the optional v3 mutation-classes section from a spec mapping.
+
+    Absent (or the canonical form's empty list) means no classes are
+    pinned. Present, it must be a list of
+    ``{class_id, risk_dossier_digest, max_tier}`` bindings — scaffold
+    campaigns are required to pin at least one by
+    :meth:`CampaignSpec._validate_mutation_classes`.
+    """
+    section = raw.get("mutation_classes")
+    if not section:
+        return ()
+    if not isinstance(section, list) or not section:
+        raise InvalidCampaignSpecError(
+            "a 'mutation_classes' section must be a non-empty list of "
+            "{class_id, risk_dossier_digest, max_tier} bindings"
+        )
+    return tuple(
+        MutationClassBinding(
+            class_id=_require_str(entry["class_id"], "mutation class_id"),
+            risk_dossier_digest=_require_str(
+                entry["risk_dossier_digest"], "mutation risk_dossier_digest"
+            ),
+            max_tier=_require_isolation_tier(entry["max_tier"], "mutation class max_tier"),
+        )
+        for entry in section
+    )
+
+
+def _parse_mutable_artifacts(raw: dict[str, Any], schema_version: int) -> MutableArtifactSet:
+    """Parse the mutable artifact set from a v2/v3 mapping, or upgrade a v1 one.
+
+    v2 and v3 documents carry `mutable_artifacts` — an ordered list of
     `{artifact_type, paths}` bindings. v1 documents carry the singular
     `mutable_artifact`; during the migration window that binding becomes
     the set's single (primary) member, so a v1 document and the equivalent
-    v2 document construct identical specs and pin to the same digest.
-    After `V1_MIGRATION_WINDOW_END` v1 documents are refused.
+    v2/v3 document construct identical specs and pin to the same digest.
+    After `V1_MIGRATION_WINDOW_END` v1 documents are refused, and after
+    `V2_MIGRATION_WINDOW_END` v2 documents are refused too — the windows
+    are for authoring migration, not permanent dual-format licenses.
     """
-    if schema_version == SUPPORTED_SPEC_VERSION:
+    if schema_version in (SUPPORTED_SPEC_VERSION, 2):
+        if schema_version == 2 and date.today() > V2_MIGRATION_WINDOW_END:
+            raise InvalidCampaignSpecError(
+                f"campaign spec schema_version 2 is no longer accepted: the v2 "
+                f"migration window closed on {V2_MIGRATION_WINDOW_END.isoformat()} — "
+                "re-author the spec with schema_version 3"
+            )
         entries = raw.get("mutable_artifacts")
         if not isinstance(entries, list) or not entries:
             raise InvalidCampaignSpecError(
@@ -975,7 +1374,7 @@ def _parse_mutable_artifacts(raw: dict[str, Any], schema_version: int) -> Mutabl
             raise InvalidCampaignSpecError(
                 f"campaign spec schema_version 1 is no longer accepted: the v1 "
                 f"migration window closed on {V1_MIGRATION_WINDOW_END.isoformat()} — "
-                "re-author the spec with schema_version 2 and a 'mutable_artifacts' set"
+                "re-author the spec with schema_version 3 and a 'mutable_artifacts' set"
             )
         legacy = raw.get("mutable_artifact")
         if not isinstance(legacy, dict):
@@ -1061,6 +1460,7 @@ __all__ = [
     "DEFAULT_MAX_SANDBOX_EXECUTIONS",
     "SUPPORTED_SPEC_VERSION",
     "V1_MIGRATION_WINDOW_END",
+    "V2_MIGRATION_WINDOW_END",
     "CampaignBudgets",
     "CampaignSpec",
     "CompensationActionSpec",
@@ -1068,6 +1468,7 @@ __all__ = [
     "DatasetBindings",
     "EvaluatorBinding",
     "IncumbentBinding",
+    "MutationClassBinding",
     "MutableArtifact",
     "MutableArtifactSet",
     "PinnedCampaignSpec",

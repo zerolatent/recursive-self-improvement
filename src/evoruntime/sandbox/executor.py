@@ -11,14 +11,19 @@ whole lifecycle:
    workspace (:mod:`evoruntime.sandbox.staging`), digest-verified.
 3. Spawn the command with a scrubbed environment and a pre-exec setup that
    applies, in order: rlimits (``memory_gib``/``cpu`` physical at spawn),
-   a network namespace where the host allows, Landlock write containment to
-   the workspace, and the seccomp socket-domain filter (kernel ``EPERM`` for
-   network dials on no-network tiers).
-4. For brokered tiers, run the :class:`EgressBrokerProxy` as the only
+   a network namespace where the host allows, Landlock write containment —
+   to the declared write zones when the profile layers them (G5), else to
+   the whole workspace — the HIGHEST syscall denylist (kernel ``EPERM`` for
+   escalation primitives), and the seccomp socket-domain filter (kernel
+   ``EPERM`` for network dials on no-network tiers).
+4. After the child exits, capture the request's declared paths from the
+   mutated workspace digest-verified (G5) — the harness's mutate stage
+   produces the bytes a later run executes as payloads.
+5. For brokered tiers, run the :class:`EgressBrokerProxy` as the only
    sanctioned network path, recording every denial.
-5. Persist an :class:`ExecutionAttestation` through the checkpoint pattern —
-   content-addressed, so the digest binds image, tier, egress denials, and
-   exit together.
+6. Persist an :class:`ExecutionAttestation` through the checkpoint pattern —
+   content-addressed, so the digest binds image, tier, egress denials,
+   captured outputs, and exit together.
 
 Enforcement boundary (documented, not hidden): on no-network tiers the
 seccomp filter is the physical wall; on the brokered tier the proxy mediates
@@ -51,6 +56,7 @@ from evoruntime.sandbox.profile import (
     ExecutionRequest,
     ExecutionResult,
     IsolationUnavailableError,
+    PayloadRef,
 )
 from evoruntime.sandbox.staging import PayloadReader, StagedWorkspace
 
@@ -121,10 +127,20 @@ class SubprocessIsolationBackend:
                 "(seccomp network filter / Landlock containment); "
                 "refusing to execute unisolated"
             )
+        if profile.tier is IsolationTier.HIGHEST and not _seccomp.syscall_denylist_supported():
+            # HIGHEST without its denylist would be EXECUTABLE wearing a
+            # label — refuse rather than degrade (fail closed).
+            raise IsolationUnavailableError(
+                "tier highest requires the escalation-primitive syscall "
+                "denylist, unavailable on this architecture; refusing the run"
+            )
 
         workspace = StagedWorkspace.stage(
             request.payloads, reader=self._payloads, tenant_id=request.tenant_id
         )
+        # Declared write zones must exist before Landlock rules attach to
+        # them in the child's pre-exec setup.
+        workspace.ensure_dirs(profile.writable_paths)
         proxy: EgressBrokerProxy | None = None
         if profile.network_mode.value == "brokered":
             proxy = EgressBrokerProxy(request.egress_policy)
@@ -143,6 +159,9 @@ class SubprocessIsolationBackend:
                 proxy.serve()
             stdout, stderr, timed_out = self._collect(process, profile)
             duration = time.monotonic() - started
+            # Capture the mutated workspace's declared outputs before
+            # teardown — digest-verified extraction, symmetric with staging.
+            captured = workspace.capture(request.capture_paths) if request.capture_paths else ()
         finally:
             if proxy is not None:
                 proxy.stop()
@@ -162,6 +181,9 @@ class SubprocessIsolationBackend:
             signal_name=signal_name,
             timed_out=timed_out,
             staged_payloads=request.payloads,
+            captured=tuple(
+                PayloadRef(path=payload.path, digest=payload.digest) for payload in captured
+            ),
             enforcement=EnforcementRecord(
                 rlimits_applied=True,
                 network_filter_applied=True,
@@ -170,6 +192,8 @@ class SubprocessIsolationBackend:
                     profile.network_mode.value == "none" and netns.netns_available()
                 ),
                 broker_proxy=proxy is not None,
+                write_zone_applied=bool(profile.writable_paths),
+                syscall_denylist=self._denied_syscalls(profile),
             ),
             allow_privileged_syscalls=profile.allow_privileged_syscalls,
         )
@@ -179,9 +203,17 @@ class SubprocessIsolationBackend:
             stdout=self._decode(stdout),
             stderr=self._decode(stderr),
             duration_seconds=duration,
+            captured=captured,
         )
 
     # -- internals ----------------------------------------------------------
+
+    @staticmethod
+    def _denied_syscalls(profile: ExecutionProfile) -> tuple[str, ...]:
+        """The syscall denylist names active for this run (empty below HIGHEST)."""
+        if profile.tier is not IsolationTier.HIGHEST or profile.allow_privileged_syscalls:
+            return ()
+        return _seccomp.HIGHEST_DENIED_SYSCALLS
 
     def _collect(
         self, process: subprocess.Popen[bytes], profile: ExecutionProfile
@@ -232,6 +264,17 @@ class SubprocessIsolationBackend:
         fails and the run aborts; the child never executes unisolated.
         """
 
+        # Layered write zoning (G5): when the profile declares zones, writes
+        # are granted only beneath them — scaffold-source writes and
+        # workspace scratch are separated, and a write outside the zone is a
+        # kernel EACCES, not a convention. Empty zones keep the Phase 2 F1
+        # behavior: the whole workspace is writable.
+        writable_roots: list[str] = (
+            [str(workspace.root / zone) for zone in profile.writable_paths]
+            if profile.writable_paths
+            else [str(workspace.root)]
+        )
+
         def setup() -> None:
             apply_rlimits(profile.resource_limits)
             if profile.network_mode.value == "none":
@@ -239,7 +282,11 @@ class SubprocessIsolationBackend:
                 # the physical wall either way, and the attestation records
                 # whether the namespace was available.
                 netns.isolate_network_namespace()
-            _landlock.restrict_writes_to([workspace.root])
+            _landlock.restrict_writes_to(writable_roots)
+            if profile.tier is IsolationTier.HIGHEST and not profile.allow_privileged_syscalls:
+                # Denylist first so the socket filter below is the last word;
+                # both stack (most restrictive return wins).
+                _seccomp.apply_syscall_denylist(_seccomp.HIGHEST_DENIED_SYSCALLS)
             _seccomp.apply_network_socket_filter(_allowed_socket_domains(profile))
 
         return setup

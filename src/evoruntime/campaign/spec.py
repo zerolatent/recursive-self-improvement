@@ -105,7 +105,7 @@ class IncumbentBinding:
         _require_digest(self.release_manifest_digest, "incumbent release manifest digest")
         if self.artifact_type not in {t.value for t in PluginArtifactType}:
             raise InvalidCampaignSpecError(
-                f"incumbent artifact_type {self.artifact_type!r} is not a Phase 1 artifact class"
+                f"incumbent artifact_type {self.artifact_type!r} is not a known artifact class"
             )
 
     def to_canonical_dict(self) -> dict[str, Any]:
@@ -132,7 +132,7 @@ class MutableArtifact:
     def __post_init__(self) -> None:
         if self.artifact_type not in {t.value for t in PluginArtifactType}:
             raise InvalidCampaignSpecError(
-                f"mutable artifact_type {self.artifact_type!r} is not a Phase 1 artifact class"
+                f"mutable artifact_type {self.artifact_type!r} is not a known artifact class"
             )
         if not self.paths:
             raise InvalidCampaignSpecError(
@@ -214,7 +214,7 @@ class CompensationActionSpec:
     def __post_init__(self) -> None:
         if self.artifact_type not in {t.value for t in PluginArtifactType}:
             raise InvalidCampaignSpecError(
-                f"compensation artifact_type {self.artifact_type!r} is not a Phase 1 artifact class"
+                f"compensation artifact_type {self.artifact_type!r} is not a known artifact class"
             )
         try:
             CompensationActionKind(self.action)

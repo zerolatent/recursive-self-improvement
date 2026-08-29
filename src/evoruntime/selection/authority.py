@@ -151,6 +151,9 @@ def resolve_authority_tier(release: ResolvedRelease) -> AuthorityTier:
         PluginArtifactType.SKILL_SCRIPT.value: AuthorityTier.TIER_3,
         PluginArtifactType.ALGORITHM.value: AuthorityTier.TIER_3,
         PluginArtifactType.HARNESS_PATCH.value: AuthorityTier.TIER_4,
+        # Phase 3 (G1): a scaffold release replaces the agent's whole source
+        # tree — the same blast radius as a harness patch, so the same tier.
+        PluginArtifactType.SCAFFOLD.value: AuthorityTier.TIER_4,
     }
     tiers = [tier_by_class.get(cls, AuthorityTier.TIER_3) for cls in release.artifact_classes]
     if not tiers:

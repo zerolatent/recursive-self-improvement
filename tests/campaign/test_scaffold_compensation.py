@@ -90,6 +90,14 @@ def _scaffold_spec_mapping(compensation_plan: dict[str, Any]) -> dict[str, Any]:
         {"artifact_type": "prompt_bundle", "paths": ["prompts/system.md"]},
         {"artifact_type": "scaffold", "paths": ["src/agent/planner.py"]},
     ]
+    # G3: a scaffold-mutable campaign must pin its mutation classes.
+    mapping["mutation_classes"] = [
+        {
+            "class_id": "scaffold_module_edit",
+            "risk_dossier_digest": "sha256:" + "a" * 64,
+            "max_tier": "highest",
+        },
+    ]
     mapping["compensation_plan"] = compensation_plan
     # G4: a scaffold-mutable campaign must carry exactly one fixed-editor
     # arm — the incumbent scaffold evaluated under the frozen editor.

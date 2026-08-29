@@ -22,6 +22,8 @@ that matter:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 
 class ReleaseError(Exception):
     """Base class for release-plane failures."""
@@ -116,6 +118,31 @@ class DigestReportingError(ReleaseError):
         )
 
 
+class CanaryIneligibleError(ReleaseError):
+    """A release's resolved artifact classes make it ineligible for canary
+    admission (H6, §17.1 step 8).
+
+    Only read-only or transactionally-reversible classes are canary-eligible:
+    the harness's only undo is the pointer rollback, so a release that needs
+    more than a pointer move to undo — executable content, harness or
+    scaffold patches, direct memory writes — is refused before any canary
+    machinery runs. The refusal carries the offending classes and the
+    release-level refusals so the caller can see exactly what failed."""
+
+    def __init__(self, ineligible_classes: Sequence[str], refusals: Sequence[str]) -> None:
+        self.ineligible_classes = tuple(ineligible_classes)
+        self.refusals = tuple(refusals)
+        parts = [
+            "canary admission refused — the release's resolved set is not "
+            "canary-eligible (only read-only or transactionally-reversible "
+            "classes are)"
+        ]
+        if self.ineligible_classes:
+            parts.append("ineligible classes: " + ", ".join(self.ineligible_classes))
+        parts.extend(self.refusals)
+        super().__init__("; ".join(parts))
+
+
 class InvalidCanaryConfigError(ReleaseError):
     """A canary configuration is malformed or below the §17.3 P0 thresholds.
 
@@ -126,6 +153,7 @@ class InvalidCanaryConfigError(ReleaseError):
 
 
 __all__ = [
+    "CanaryIneligibleError",
     "DigestReportingError",
     "InvalidCanaryConfigError",
     "NamespaceViolationError",

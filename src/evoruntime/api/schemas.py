@@ -172,6 +172,35 @@ class RollbackStatusView(EvoRuntimeBaseModel):
     rolled_back_to: str | None = None
 
 
+class CanaryRunView(EvoRuntimeBaseModel):
+    """One canary run's measurements, read from the append-only ledger
+    (H6). The FR-012 numbers ride along with the outcome."""
+
+    run_id: str
+    manifest_digest: str
+    outcome: str
+    paired_tasks: int
+    total_sessions: int
+    candidate_sessions: int
+    candidate_allocation: float
+    stopped_reason: str | None = None
+    rolled_back_to: str | None = None
+    digest_report_coverage: float
+    p99_convergence_seconds: float | None = None
+    observation_elapsed_seconds: float
+    guardrail_events: list[dict[str, Any]] = []
+    release_status: str | None = None
+    created_at: datetime
+
+
+class CanaryStatusView(EvoRuntimeBaseModel):
+    """Where a release stands with respect to its canary runs (H6)."""
+
+    manifest_digest: str
+    release_status: str | None = None
+    latest_run: CanaryRunView | None = None
+
+
 class ApprovalRequestView(EvoRuntimeBaseModel):
     """A review-board request for a tier-3/4 promotion or privileged
     plugin admission (F10).

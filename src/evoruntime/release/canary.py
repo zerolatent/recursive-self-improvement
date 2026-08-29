@@ -27,6 +27,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
+from typing import Protocol
 
 from evoruntime.campaign.compensation import (
     CompensationExecutor,
@@ -42,7 +43,7 @@ from evoruntime.release.errors import InvalidCanaryConfigError, NoActiveReleaseE
 from evoruntime.release.fleet import (
     CANDIDATE_NAMESPACE,
     INCUMBENT_NAMESPACE,
-    InProcessFleetSimulator,
+    FleetAdapter,
     SessionArm,
 )
 from evoruntime.release.manifest import SignedReleaseManifest
@@ -138,8 +139,30 @@ class CanaryResult:
     guardrail_events: tuple[GuardrailEvent, ...]
 
 
+class CanaryFleet(FleetAdapter, Protocol):
+    """The fleet surface the canary harness consumes: the four
+    FleetAdapter operations plus the namespaced candidate-state write and
+    the two FR-012 measurement surfaces. The in-process simulator
+    satisfies it; a service wrapper that enforces candidate-state
+    namespacing at its own boundary satisfies it too (H6) — the harness
+    cannot tell the difference, which is the point.
+    """
+
+    def write_state(self, session_id: str, key: str, value: object, *, namespace: str) -> None:
+        """Write session state into ``namespace`` (arm-checked)."""
+        ...
+
+    def digest_report_coverage(self, *, expected_sessions: set[str] | None = None) -> float:
+        """Fraction of sessions that reported the digest they resolved."""
+        ...
+
+    def p99_convergence_seconds(self) -> float:
+        """The 99th-percentile convergence latency of the last invalidation."""
+        ...
+
+
 class CanaryHarness:
-    """Runs the fixed-horizon canary against the fleet simulator.
+    """Runs the fixed-horizon canary against the fleet.
 
     The harness orchestrates; the authority stays where it belongs: the
     pointer moves only through the release controller's CAS, the fleet
@@ -152,7 +175,7 @@ class CanaryHarness:
         *,
         config: CanaryConfig,
         controller: ReleaseController,
-        fleet: InProcessFleetSimulator,
+        fleet: CanaryFleet,
         clock: WallClock,
         compensation_plan: SignedCompensationPlan | None = None,
         compensation_executions: ExecutionSink | None = None,
@@ -322,6 +345,7 @@ def _events_by_task(
 
 
 __all__ = [
+    "CanaryFleet",
     "MAX_CANDIDATE_ALLOCATION",
     "MIN_OBSERVATION",
     "MIN_PAIRED_TASKS",

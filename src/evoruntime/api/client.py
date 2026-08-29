@@ -518,3 +518,14 @@ class EvoApiClient:
     def rollback_status(self, manifest_digest: str) -> dict[str, Any]:
         """GET /v1/releases/{digest}/rollback-status."""
         return self._request_dict("GET", f"/v1/releases/{manifest_digest}/rollback-status")
+
+    def start_canary(
+        self, manifest_digest: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """POST /v1/releases/{digest}/canary/start — admit and run one
+        fixed-horizon canary (H6)."""
+        return self._request_dict("POST", f"/v1/releases/{manifest_digest}/canary/start", body)
+
+    def canary_status(self, manifest_digest: str) -> dict[str, Any]:
+        """GET /v1/releases/{digest}/canary-status — live canary state (H6)."""
+        return self._request_dict("GET", f"/v1/releases/{manifest_digest}/canary-status")

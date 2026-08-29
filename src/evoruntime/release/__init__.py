@@ -19,6 +19,7 @@ from evoruntime.release.canary import (
     MIN_PAIRED_TASKS,
     SEVERITY_1,
     CanaryConfig,
+    CanaryFleet,
     CanaryHarness,
     CanaryOutcome,
     CanaryResult,
@@ -26,7 +27,13 @@ from evoruntime.release.canary import (
 )
 from evoruntime.release.clock import CompressedClock, MonotonicClock, RealClock, WallClock
 from evoruntime.release.controller import ReleaseController
+from evoruntime.release.eligibility import (
+    CanaryEligibility,
+    assert_canary_eligible,
+    resolve_canary_eligibility,
+)
 from evoruntime.release.errors import (
+    CanaryIneligibleError,
     DigestReportingError,
     InvalidCanaryConfigError,
     NamespaceViolationError,
@@ -70,7 +77,10 @@ __all__ = [
     "MIN_PAIRED_TASKS",
     "SEVERITY_1",
     "CanaryConfig",
+    "CanaryEligibility",
+    "CanaryFleet",
     "CanaryHarness",
+    "CanaryIneligibleError",
     "CanaryOutcome",
     "CanaryResult",
     "CompressedClock",
@@ -98,7 +108,9 @@ __all__ = [
     "UnknownSessionError",
     "UnsignedManifestError",
     "WallClock",
+    "assert_canary_eligible",
     "evaluate_invalidation",
+    "resolve_canary_eligibility",
     "sign_release_manifest",
     "strongest_action",
     "verify_release_manifest",

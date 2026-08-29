@@ -174,6 +174,41 @@ class ReleaseActivation(Base):
     )
 
 
+class CanaryRun(Base):
+    """One fixed-horizon canary run over a release manifest (H6).
+
+    Append-only: the run's measurements are the §17.3 row-8 evidence, and
+    a run whose numbers could be edited after the fact would vouch for a
+    canary nobody ran. The harness result is stored verbatim as JSONB;
+    the release activation ledger stays the authority on pointer state —
+    this table records what the canary measured, not what the pointer did.
+    """
+
+    __tablename__ = "canary_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[str] = mapped_column(nullable=False)
+    manifest_digest: Mapped[str] = mapped_column(nullable=False)
+    run_id: Mapped[str] = mapped_column(nullable=False, unique=True)
+    outcome: Mapped[str] = mapped_column(nullable=False)
+    config: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    result: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    started_by: Mapped[str] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint("outcome IN ('completed', 'rolled_back')", name="ck_canary_runs_outcome"),
+        ForeignKeyConstraint(
+            ["tenant_id", "manifest_digest"],
+            ["release_manifests.tenant_id", "release_manifests.manifest_digest"],
+            name="fk_canary_runs_manifest",
+        ),
+        Index("ix_canary_runs_tenant_manifest", "tenant_id", "manifest_digest"),
+    )
+
+
 class EvidenceBundleRecord(Base):
     """A redacted evidence bundle (E8's `RedactedEvidenceBundle` shape)
     attached to a campaign and optionally to one candidate artifact.

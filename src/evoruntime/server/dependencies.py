@@ -23,12 +23,20 @@ from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session, sessionmaker
 
 from evoruntime.api.approvals import ApprovalWorkflowService
+from evoruntime.api.canary import CanaryService
 from evoruntime.api.service import CampaignApiService
 from evoruntime.core.principal import Principal
 from evoruntime.datasets.service import DatasetService, HoldoutService
 from evoruntime.db.base import build_engine, build_session_factory
+from evoruntime.release import (
+    InProcessFleetSimulator,
+    RealClock,
+    ReleaseController,
+    WallClock,
+)
 from evoruntime.security.identities import WorkloadIdentity, WorkloadRole
 from evoruntime.security.signing import SigningKeyError, load_evaluator_signing_key
+from evoruntime.selection.release_pointer import ReleasePointerStore
 from evoruntime.server.settings import get_settings
 
 IDENTITY_HEADER = "x-evoruntime-identity"
@@ -138,8 +146,63 @@ def get_approval_service(session_factory: SessionFactoryDep) -> ApprovalWorkflow
     )
 
 
+@lru_cache
+def get_release_plane() -> tuple[ReleaseController, InProcessFleetSimulator, WallClock]:
+    """Return the process-wide release plane the canary service runs on.
+
+    The pointer store, fleet, and clock are deployment-level singletons:
+    pointer state must survive across requests (a canary bootstraps the
+    incumbent once and every later run compares against it). The fleet is
+    the in-process reference adapter — real fleet wiring (Kubernetes
+    rollout, edge invalidation) is deployment-specific (locked decision
+    #5) and replaces this at the same seam.
+    """
+    clock = RealClock()
+    fleet = InProcessFleetSimulator(
+        worker_count=8,
+        latency_sampler=lambda: 2.0,
+        clock=clock,
+    )
+    controller = ReleaseController(
+        ReleasePointerStore(),
+        WorkloadIdentity(
+            role=WorkloadRole.RELEASE_CONTROLLER,
+            subject="evoruntime-release-controller",
+        ),
+    )
+    return controller, fleet, clock
+
+
+ReleasePlaneDep = Annotated[
+    tuple[ReleaseController, InProcessFleetSimulator, WallClock],
+    Depends(get_release_plane),
+]
+
+
+def get_canary_service(
+    session_factory: SessionFactoryDep,
+    releases: CampaignServiceDep,
+    plane: ReleasePlaneDep,
+) -> CanaryService:
+    """Return the H6 canary monitoring service bound to this deployment.
+
+    The release plane arrives through `Depends` (not a direct call) so
+    dependency overrides — tests swap in a fresh plane per test — are
+    honored.
+    """
+    controller, fleet, clock = plane
+    return CanaryService(
+        session_factory,
+        releases=releases,
+        controller=controller,
+        fleet=fleet,
+        clock=clock,
+    )
+
+
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 DatasetServiceDep = Annotated[DatasetService, Depends(get_dataset_service)]
 HoldoutServiceDep = Annotated[HoldoutService, Depends(get_holdout_service)]
 CampaignServiceDep = Annotated[CampaignApiService, Depends(get_campaign_service)]
+CanaryServiceDep = Annotated[CanaryService, Depends(get_canary_service)]
 ApprovalServiceDep = Annotated[ApprovalWorkflowService, Depends(get_approval_service)]

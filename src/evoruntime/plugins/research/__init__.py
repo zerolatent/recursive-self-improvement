@@ -12,6 +12,10 @@ JSON-RPC:
   artifact search: islands over a MAP-Elites archive,
   diversity-constrained parent sampling, and cascaded
   cheap-to-expensive evaluation via the F6 stage/cost_class bindings.
+- :mod:`.harness_mutator` — the §16.6 harness-mutator (Phase 3, G9):
+  DGM/HGM-style mutation of the ``scaffold`` class (G1), parent
+  selection over the FR-102 productivity projection, and declared
+  mutation classes on every proposal for the graduation policy (G10).
 
 **Placement** mirrors the E7 reference plugins
 (:mod:`evoruntime.plugins.reference`): the plugins live inside the
@@ -50,10 +54,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from evoruntime.plugins.packaging import BuiltPluginImage, build_plugin_image
 
-#: The two research plugin modules, in PRD §16.5 order.
+#: The research plugin modules, in PRD §16.5/§16.6 order.
 RESEARCH_PLUGIN_MODULES: tuple[str, ...] = (
     "evoruntime.plugins.research.workflow_graph_search",
     "evoruntime.plugins.research.evolutionary_artifact_search",
+    "evoruntime.plugins.research.harness_mutator",
 )
 
 

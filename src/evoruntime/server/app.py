@@ -13,6 +13,7 @@ from evoruntime.server.routers import (
     approvals,
     campaigns,
     candidates,
+    claims,
     datasets,
     discovery,
     evaluations,
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
     app.include_router(datasets.router)
     app.include_router(ingest.router)
     app.include_router(campaigns.router)
+    app.include_router(claims.router)
     app.include_router(candidates.router)
     app.include_router(agents.router)
     app.include_router(evidence.router)

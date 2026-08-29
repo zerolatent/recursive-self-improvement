@@ -407,3 +407,26 @@ class AnalysisReportView(EvoRuntimeBaseModel):
     signature_b64: str
     signer_public_key_b64: str
     created_at: datetime
+
+
+class ClaimDecisionView(EvoRuntimeBaseModel):
+    """One append-only §12.6 claim-label decision (H11, read surface).
+
+    ``label`` is the honest label the gate assigned — a refusal records
+    the honest label plus its reason, never a recursive-improvement label
+    the evidence does not back.
+    """
+
+    decision_id: str
+    tenant_id: str
+    label: str
+    issued: bool
+    verdict_satisfied: bool
+    refusal_reason: str | None = None
+    evidence: dict[str, Any]
+    evidence_digest: str
+    campaign_id: str | None = None
+    generation1_release_digest: str | None = None
+    generation2_release_digest: str | None = None
+    actor: str
+    decided_at: datetime

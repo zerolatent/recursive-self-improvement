@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from evoruntime.api.approvals import ApprovalWorkflowService
 from evoruntime.api.canary import CanaryService
+from evoruntime.api.claims import ClaimIssuanceService
 from evoruntime.api.service import CampaignApiService
 from evoruntime.core.principal import Principal
 from evoruntime.datasets.service import DatasetService, HoldoutService
@@ -206,3 +207,16 @@ HoldoutServiceDep = Annotated[HoldoutService, Depends(get_holdout_service)]
 CampaignServiceDep = Annotated[CampaignApiService, Depends(get_campaign_service)]
 CanaryServiceDep = Annotated[CanaryService, Depends(get_canary_service)]
 ApprovalServiceDep = Annotated[ApprovalWorkflowService, Depends(get_approval_service)]
+
+
+def get_claim_service(session_factory: SessionFactoryDep) -> ClaimIssuanceService:
+    """Return the H11 claim-issuance service bound to this deployment.
+
+    The tenant-policy registry defaults to empty — every tenant fails
+    closed as production until the deployment pins policy documents, the
+    same fail-closed default every other policy consumer uses.
+    """
+    return ClaimIssuanceService(session_factory)
+
+
+ClaimServiceDep = Annotated[ClaimIssuanceService, Depends(get_claim_service)]

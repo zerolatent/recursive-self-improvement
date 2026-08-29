@@ -19,6 +19,8 @@ from evoruntime.api.errors import (
     ApprovalRequestNotFoundError,
     CampaignApiError,
     CampaignNotFoundError,
+    ClaimDecisionNotFoundError,
+    ClaimRefusedError,
     CompensationPlanNotFoundError,
     DiffUnavailableError,
     DiscoveryReportIntegrityError,
@@ -182,6 +184,21 @@ async def handle_payload_revoked(_: Request, exc: Exception) -> JSONResponse:
     )
 
 
+async def handle_claim_refused(_: Request, exc: Exception) -> JSONResponse:
+    """Render a refused claim label as 403 with the recorded decision id.
+
+    The refusal is already an append-only record when this renders; the
+    body carries its id so the caller can retrieve what was recorded and
+    why — a refusal the caller cannot look up is a refusal they cannot
+    audit.
+    """
+    assert isinstance(exc, ClaimRefusedError)  # pragma: no cover - registered per type
+    return JSONResponse(
+        status_code=status.HTTP_403_FORBIDDEN,
+        content={"detail": str(exc), "decision_id": exc.decision_id},
+    )
+
+
 async def handle_campaign_api_error(_: Request, exc: Exception) -> JSONResponse:
     """Fallback for remaining control-plane errors: 400 with the reason."""
     if not isinstance(exc, CampaignApiError):  # pragma: no cover - registered per type
@@ -229,3 +246,7 @@ def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(PayloadNotFoundError, handle_payload_not_found)
     app.add_exception_handler(PayloadAccessRevokedError, handle_payload_revoked)
     app.add_exception_handler(CampaignApiError, handle_campaign_api_error)
+    # H11 claim issuance: a refused label is 403 with the recorded
+    # decision id; a tenant-scoped decision lookup that misses is 404.
+    app.add_exception_handler(ClaimRefusedError, handle_claim_refused)
+    app.add_exception_handler(ClaimDecisionNotFoundError, handle_campaign_not_found)

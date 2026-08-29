@@ -94,6 +94,24 @@ class ApprovalDeniedError(CampaignApiError):
         self.reason = reason
 
 
+class ClaimRefusedError(CampaignApiError):
+    """The evidence does not back the recursive-improvement label (H11).
+
+    The refusal is already recorded append-only when this is raised; the
+    error carries the decision id so the caller can retrieve the record
+    that documents why the label was refused.
+    """
+
+    def __init__(self, decision_id: str, reason: str) -> None:
+        super().__init__(reason)
+        self.decision_id = decision_id
+        self.reason = reason
+
+
+class ClaimDecisionNotFoundError(CampaignApiError):
+    """No claim decision with that id in the caller's tenant."""
+
+
 class TierPromotionRefusedError(CampaignApiError):
     """A tier-3/4 promotion was refused by the Phase 2 tier gate — the
     approval evidence is missing or malformed, and the promotion is

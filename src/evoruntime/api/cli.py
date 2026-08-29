@@ -410,6 +410,40 @@ def cmd_candidate_evidence(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_claim_issue(args: argparse.Namespace) -> int:
+    """Submit assembled §12.6 evidence for a claim-label decision (H11).
+
+    The label is decided server-side by the gate; a refusal is recorded
+    append-only and reported with its decision id.
+    """
+    evidence = _read_json_file(args.evidence_file)
+    with build_client(args.config) as client:
+        result = client.issue_claim_label(
+            evidence,
+            campaign_id=args.campaign_id,
+            generation1_release_digest=args.generation1_release_digest,
+            generation2_release_digest=args.generation2_release_digest,
+        )
+    _print(result)
+    return 0
+
+
+def cmd_claim_list(args: argparse.Namespace) -> int:
+    """List the tenant's claim decisions, oldest first."""
+    with build_client(args.config) as client:
+        result = client.list_claim_decisions()
+    _print(result)
+    return 0
+
+
+def cmd_claim_status(args: argparse.Namespace) -> int:
+    """Show one claim decision — issued, or refused with its reason."""
+    with build_client(args.config) as client:
+        result = client.get_claim_decision(args.decision_id)
+    _print(result)
+    return 0
+
+
 # ----------------------------------------------------------------------
 # parser wiring
 # ----------------------------------------------------------------------
@@ -670,6 +704,26 @@ def build_parser() -> argparse.ArgumentParser:
     comp_get.add_argument("plan_id")
     comp_get.set_defaults(func=cmd_compensation)
     _add_config_arg(comp_get)
+
+    claim = sub.add_parser("claim", help="recursive-claim label decisions (H11)")
+    claim_sub = claim.add_subparsers(dest="claim_cmd", required=True)
+
+    claim_issue = claim_sub.add_parser("issue", help="submit evidence for a claim-label decision")
+    claim_issue.add_argument("--evidence-file", required=True, help="JSON file of §12.6 evidence")
+    claim_issue.add_argument("--campaign-id", default=None)
+    claim_issue.add_argument("--generation1-release-digest", default=None)
+    claim_issue.add_argument("--generation2-release-digest", default=None)
+    claim_issue.set_defaults(func=cmd_claim_issue)
+    _add_config_arg(claim_issue)
+
+    claim_list = claim_sub.add_parser("list", help="claim decisions, oldest first")
+    claim_list.set_defaults(func=cmd_claim_list)
+    _add_config_arg(claim_list)
+
+    claim_status = claim_sub.add_parser("status", help="one claim decision by id")
+    claim_status.add_argument("--decision-id", required=True)
+    claim_status.set_defaults(func=cmd_claim_status)
+    _add_config_arg(claim_status)
 
     return parser
 

@@ -868,6 +868,24 @@ class CampaignApiService:
         detached = sign(self._signing_key, report.canonical_bytes())
         report_id = new_id("drpt")
         with session_scope(self._session_factory) as session:
+            # Deterministic re-run over unchanged traces: the freshly
+            # clustered report has the same digest (and with it the same
+            # signature) as a report already on the analysis-report path, so
+            # the existing signed row IS the answer — serve it verified
+            # instead of colliding with the (tenant, verdict_digest) unique
+            # index. Discovery is a pure read-side function; re-running it
+            # must not manufacture a second record for the same bytes.
+            existing = session.execute(
+                select(AnalysisReport).where(
+                    AnalysisReport.tenant_id == principal.tenant_id,
+                    AnalysisReport.artifact_type == DISCOVERY_ARTIFACT_TYPE,
+                    AnalysisReport.verdict_digest == report.report_digest,
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                stored = self._rebuild_discovery_report(existing)
+                self._verify_discovery_row(existing, stored)
+                return self._discovery_report_view(existing, stored)
             # The row's JSONB payload column carries the full report body
             # under the kind marker — lossless, so the canonical bytes (and
             # with them the digest and signature) rebuild exactly on read.

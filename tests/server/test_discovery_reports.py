@@ -121,8 +121,11 @@ def test_discovery_is_deterministic_over_the_same_traces(
     assert first.status_code == 201 and second.status_code == 201
 
     # Same inputs → identical report digest: the clustering is a pure
-    # function of the trace reads, so a re-run re-signs the same bytes.
+    # function of the trace reads, so a re-run re-signs the same bytes —
+    # and the idempotent persistence serves the already-signed row rather
+    # than colliding with the (tenant, verdict_digest) unique index.
     assert first.json()["report_digest"] == second.json()["report_digest"]
+    assert first.json()["report_id"] == second.json()["report_id"]
 
 
 def test_discovery_scopes_by_agent(client: TestClient, auth_headers, evaluator: Principal) -> None:

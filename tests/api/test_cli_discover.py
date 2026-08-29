@@ -142,10 +142,12 @@ def test_cli_campaign_discover_emits_a_signed_report(
     assert report["signature_b64"]
     assert report["signer_public_key_b64"]
 
-    # A second run over unchanged traces re-signs the same digest.
+    # A second run over unchanged traces re-signs the same digest and
+    # serves the already-signed report (idempotent persistence).
     code, rerun = _run_evo(capsys, "campaign", "discover", "--config", str(config))
     assert code == 0
     assert rerun["report_digest"] == report["report_digest"]
+    assert rerun["report_id"] == report["report_id"]
 
 
 def test_cli_campaign_discover_scopes_by_agent(

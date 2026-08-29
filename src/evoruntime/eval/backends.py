@@ -40,15 +40,26 @@ from evoruntime.eval.budgets import BudgetMeter, BudgetUsage
 from evoruntime.eval.errors import (
     BackendCredentialError,
     BackendRequestError,
+    BrokeredEgressDeniedError,
     ScriptedAgentError,
 )
 from evoruntime.eval.tasks import EvalTask
+from evoruntime.security.egress import EgressBroker, EgressDeniedError, EgressPolicy
 
 DEFAULT_MODEL_API_KEY_SECRET = "EVORUNTIME_MODEL_API_KEY"
 """Secret name holding the API key for the OpenAI-compatible backend."""
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 """Overridable per client — any OpenAI-compatible gateway works."""
+
+DEFAULT_MODEL_HOSTS = ("api.openai.com",)
+"""The default model_hosts allowlist (H10).
+
+Deny-by-default with one sanctioned host: a backend pointed at any other
+endpoint must name that host explicitly, so a misconfigured campaign
+cannot dial a provider nobody allowlisted. Mirrors the harness mutator's
+MODEL_HOSTS convention (G9).
+"""
 
 CHARS_PER_TOKEN_ESTIMATE = 3.0
 """Deliberately pessimistic (real English is closer to 4).
@@ -342,6 +353,78 @@ class HttpChatCompletionClient:
         return parse_chat_response(body)
 
 
+def _model_broker(model_hosts: Sequence[str]) -> EgressBroker:
+    """Build the egress broker for a model_hosts allowlist (H10).
+
+    Hosts are normalized here once; the broker matches case-insensitively
+    and exactly — no wildcards, per EgressPolicy's bypass rules.
+
+    Raises:
+        ValueError: the allowlist is empty or contains blank hosts. An
+            empty allowlist on a model backend is a misconfiguration, not
+            a posture — refuse it at construction, fail closed at runtime.
+    """
+    hosts = tuple(model_hosts)
+    if not hosts or any(not host.strip() for host in hosts):
+        raise ValueError(
+            "model_hosts must name at least one host — an empty allowlist "
+            "denies every model dial; configure the allowlist explicitly"
+        )
+    return EgressBroker(
+        EgressPolicy(allowed_hosts=frozenset(host.strip().lower() for host in hosts))
+    )
+
+
+class BrokeredChatCompletionClient:
+    """ChatCompletionClient wrapper that authorizes every dial through the broker.
+
+    The sanctioned construction path for live model access (H10): the
+    policy check runs before the wrapped transport is touched, so a client
+    pointed anywhere off the model_hosts allowlist fails closed — the
+    §13.2 direct-dial bypass has no path through this class. Satisfies the
+    `ChatCompletionClient` protocol, so it composes anywhere a client is
+    expected, including behind the fixture agent's harness backend.
+    """
+
+    def __init__(
+        self,
+        inner: ChatCompletionClient,
+        *,
+        model_endpoint: str = DEFAULT_OPENAI_BASE_URL,
+        model_hosts: Sequence[str] = DEFAULT_MODEL_HOSTS,
+    ) -> None:
+        self._inner = inner
+        self._broker = _model_broker(model_hosts)
+        self._model_endpoint = model_endpoint
+
+    def complete(self, request: ChatRequest, *, api_key: str) -> ChatResponse:
+        """Authorize the destination, then delegate to the wrapped transport."""
+        try:
+            self._broker.authorize(self._model_endpoint)
+        except EgressDeniedError as exc:
+            raise BrokeredEgressDeniedError(str(exc)) from exc
+        return self._inner.complete(request, api_key=api_key)
+
+
+def brokered_model_client(
+    *,
+    base_url: str = DEFAULT_OPENAI_BASE_URL,
+    model_hosts: Sequence[str] = DEFAULT_MODEL_HOSTS,
+    timeout_s: float = 60.0,
+) -> ChatCompletionClient:
+    """The sanctioned live-model dial path: HTTP transport behind the broker.
+
+    Every harness model dial should be built through this factory (or the
+    backend's own broker check) — a bare `HttpChatCompletionClient` handed
+    to a backend is a direct-dial path the §13.2 closure exists to prevent.
+    """
+    return BrokeredChatCompletionClient(
+        HttpChatCompletionClient(base_url=base_url, timeout_s=timeout_s),
+        model_endpoint=base_url,
+        model_hosts=model_hosts,
+    )
+
+
 def parse_chat_response(body: Any) -> ChatResponse:
     """Extract the completion text and usage from a provider response.
 
@@ -404,6 +487,8 @@ class OpenAICompatibleBackend:
         max_output_tokens: int = 2_048,
         temperature: float = 0.0,
         success_marker: str = "TASK_COMPLETE",
+        model_endpoint: str = DEFAULT_OPENAI_BASE_URL,
+        model_hosts: Sequence[str] = DEFAULT_MODEL_HOSTS,
     ) -> None:
         self._model = model
         self._client = client
@@ -412,9 +497,22 @@ class OpenAICompatibleBackend:
         self._max_output_tokens = max_output_tokens
         self._temperature = temperature
         self._success_marker = success_marker
+        # H10: every dial is authorized against the model_hosts allowlist
+        # before anything else happens — no credential is read and no byte
+        # moves to a host the broker has not sanctioned.
+        self._broker = _model_broker(model_hosts)
+        self._model_endpoint = model_endpoint
 
     def run(self, request: AgentRequest, meter: BudgetMeter) -> AgentResponse:
         """Make one live completion call inside the arm's remaining budget."""
+        # Broker first, credential second: the refusal must not depend on
+        # the secrets store, and the secrets store must not be touched for
+        # a host the policy denies.
+        try:
+            self._broker.authorize(self._model_endpoint)
+        except EgressDeniedError as exc:
+            raise BrokeredEgressDeniedError(str(exc)) from exc
+
         # Resolved per attempt, never at construction: a credential held in
         # an object outlives the rotation that was supposed to retire it.
         api_key = resolve_credential(self._secrets, self._secret_name)
@@ -451,18 +549,21 @@ class OpenAICompatibleBackend:
 __all__ = [
     "CHARS_PER_TOKEN_ESTIMATE",
     "DEFAULT_MODEL_API_KEY_SECRET",
+    "DEFAULT_MODEL_HOSTS",
     "DEFAULT_OPENAI_BASE_URL",
     "AgentBackend",
     "AgentRequest",
     "AgentResponse",
     "AttemptCost",
     "BernoulliScriptedAgent",
+    "BrokeredChatCompletionClient",
     "ChatCompletionClient",
     "ChatRequest",
     "ChatResponse",
     "EnvSecretsProvider",
     "HttpChatCompletionClient",
     "OpenAICompatibleBackend",
+    "brokered_model_client",
     "ScriptedAgent",
     "ScriptedStep",
     "SecretsProvider",

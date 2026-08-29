@@ -92,12 +92,56 @@ class CampaignCheckpointError(CampaignError):
     """
 
 
+class UnexecutedCompensationError(CampaignError):
+    """A declared requires-execution compensation has no execution record.
+
+    F5: promotion is refused while a non-CAS compensating action is
+    declared and not executed — a rollback that leaves external state
+    mutated is not a rollback, it is a release with extra steps. Carries
+    the plan, the action's position, and its kind so the operator knows
+    exactly which compensation is still owed.
+    """
+
+    def __init__(self, plan_id: str, action_index: int, action: str, artifact_digest: str) -> None:
+        self.plan_id = plan_id
+        self.action_index = action_index
+        self.action = action
+        self.artifact_digest = artifact_digest
+        super().__init__(
+            f"compensation plan {plan_id!r} action #{action_index} ({action!r}, "
+            f"artifact {artifact_digest!r}) is declared requires-execution but has "
+            "no execution record — promotion is refused"
+        )
+
+
+class CompensationPlanTamperedError(CampaignError):
+    """A compensation plan failed digest or signature verification.
+
+    The plan is signed and content-addressed like a pinned spec; bytes
+    that no longer hash to their address or verify against their
+    signature are a forgery (or corruption), and are refused rather than
+    trusted to gate promotion.
+    """
+
+
+class CompensationPlanBuildError(CampaignError):
+    """A compensation plan could not be built or its actions are malformed.
+
+    Raised at plan-construction time: an action without an artifact
+    digest, with an unknown execution mode, or targeting an artifact type
+    with no resolved candidate digest is not a plan, it is a refusal.
+    """
+
+
 __all__ = [
     "CampaignBudgetExceededError",
     "CampaignCheckpointError",
     "CampaignError",
+    "CompensationPlanBuildError",
+    "CompensationPlanTamperedError",
     "InvalidCampaignSpecError",
     "InvalidTransitionError",
     "MutationMaskViolationError",
     "SpecTamperedError",
+    "UnexecutedCompensationError",
 ]

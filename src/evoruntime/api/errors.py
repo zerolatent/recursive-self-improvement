@@ -70,6 +70,16 @@ class AnalysisReportNotFoundError(CampaignApiError):
     """No static-analysis report with that id in the caller's tenant."""
 
 
+class DiscoveryReportNotFoundError(CampaignApiError):
+    """No discovery report with that id in the caller's tenant."""
+
+
+class DiscoveryReportIntegrityError(CampaignApiError):
+    """A stored discovery report's bytes no longer hash to its digest, or its
+    signature no longer verifies — the record is detectably tampered, and
+    reads refuse it rather than serving untrusted content."""
+
+
 class ApprovalDeniedError(CampaignApiError):
     """A review-board decision or admission was refused by the
     two-person governance gate (FR-022 semantics).

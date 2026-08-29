@@ -21,6 +21,8 @@ from evoruntime.api.errors import (
     CampaignNotFoundError,
     CompensationPlanNotFoundError,
     DiffUnavailableError,
+    DiscoveryReportIntegrityError,
+    DiscoveryReportNotFoundError,
     EvidenceNotFoundError,
     InvalidCampaignTransitionError,
     InvalidSpecError,
@@ -186,6 +188,11 @@ def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AdmissionRecordNotFoundError, handle_campaign_not_found)
     app.add_exception_handler(CompensationPlanNotFoundError, handle_campaign_not_found)
     app.add_exception_handler(AnalysisReportNotFoundError, handle_campaign_not_found)
+    # H3 discovery reports: a tenant-scoped lookup that misses is 404; a
+    # report whose stored bytes or signature fail verification is 409 —
+    # the row exists but cannot be honestly served.
+    app.add_exception_handler(DiscoveryReportNotFoundError, handle_campaign_not_found)
+    app.add_exception_handler(DiscoveryReportIntegrityError, handle_invalid_transition)
     app.add_exception_handler(ApprovalDeniedError, handle_approval_denied)
     app.add_exception_handler(TierPromotionRefusedError, handle_tier_promotion_refused)
     app.add_exception_handler(RegistrationRefusedError, handle_registration_refused)

@@ -245,6 +245,45 @@ class StaticAnalysisReportView(EvoRuntimeBaseModel):
     created_at: datetime
 
 
+class DiscoveryClusterView(EvoRuntimeBaseModel):
+    """One failure cluster in a discovery report (H3 read surface).
+
+    ``category`` is a D8 taxonomy name, or None for the unclassified
+    bucket — failures that matched no taxonomy entry and no signal rule
+    are reported, never dropped.
+    """
+
+    category: str | None
+    failure_signature: str
+    trace_ids: list[str]
+    representative_trace_ids: list[str]
+    count: int
+
+
+class DiscoveryReportView(EvoRuntimeBaseModel):
+    """A signed discovery report (H3 record type, read surface).
+
+    ``signature_b64``/``signer_public_key_b64`` carry the Ed25519 detached
+    signature over the report's canonical bytes, so a caller can verify
+    what discovery clustered without trusting the JSON.
+    """
+
+    report_id: str
+    campaign_id: str | None = None
+    agent_id: str | None = None
+    release_id: str | None = None
+    traces_scanned: int
+    unresolved_events: int
+    failure_count: int
+    unclassified_count: int
+    categories_hit: list[str]
+    clusters: list[DiscoveryClusterView]
+    report_digest: str
+    signature_b64: str
+    signer_public_key_b64: str
+    created_at: datetime
+
+
 class CompensationPlanView(EvoRuntimeBaseModel):
     """A signed compensation plan (F5 record type, read surface)."""
 

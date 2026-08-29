@@ -23,11 +23,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Protocol
 
+from evoruntime.core.metrics import COST_METRIC_KEYS
 from evoruntime.registry.service import RegistryService
 from evoruntime.selection.errors import AlreadyFrozenError, NominationRuleError
 
@@ -38,6 +40,20 @@ NOMINATE_EVENT_KIND = "nominate"
 REJECT_EVENT_KIND = "reject"
 
 _SELECTOR_ACTOR = "trusted-selector"
+
+#: The closed nomination-metric namespace (FR-102, locked decision 6).
+#: Exactly two metrics are preregistered; the namespace is closed at spec
+#: pin, so post-hoc metric injection remains impossible — adding a metric
+#: is a code change to this tuple, reviewed as a spec change, never a
+#: runtime value a strategy can supply.
+NOMINATION_METRICS: tuple[str, ...] = ("selection_score", "productivity_score")
+
+#: The cost normalizations preregistered for the productivity metric.
+#: Only 'arm_max' is defined: a candidate's cost is divided by the largest
+#: attested cost in its arm, mapping every cost into (0, 1] with the
+#: arm's most expensive candidate at 1. The selector computes it from the
+#: observations themselves — deterministic, and never a strategy input.
+COST_NORMALIZATIONS: tuple[str, ...] = ("arm_max",)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,22 +67,38 @@ class NominationRule:
     """
 
     metric: str = "selection_score"
-    """Name of the observation field the rule ranks by."""
+    """Name of the observation field the rule ranks by. One of the closed
+    `NOMINATION_METRICS` namespace, pinned at spec time."""
 
     min_score: float = 0.0
     """Inclusive floor: a candidate below it is never nominated, even if
-    it is the arm's best."""
+    it is the arm's best. The floor applies to `selection_score` — the
+    quality metric — under both rules; the productivity rule ranks only
+    candidates that already clear it."""
 
     tiebreak: str = "lowest_digest"
     """Deterministic tiebreak for equal scores. Only 'lowest_digest' is
     defined; anything else is a construction error so two runs of the same
     rule can never disagree."""
 
+    cost_metric: str = "total_tokens"
+    """Which attested cost the productivity rule divides by. Must be a
+    member of the closed COST_METRIC_KEYS vocabulary — an unregistered
+    cost metric is a construction error, so the cost normalization is
+    pinned at spec time together with the metric itself."""
+
+    cost_normalization: str = "arm_max"
+    """How the pinned cost is normalized. Only 'arm_max' is preregistered;
+    anything else is a construction error (a normalization chosen after
+    seeing the costs is the same post-hoc move as a metric chosen after
+    seeing the scores)."""
+
     def __post_init__(self) -> None:
-        if self.metric != "selection_score":
+        if self.metric not in NOMINATION_METRICS:
             raise NominationRuleError(
-                f"unknown nomination metric {self.metric!r} — the rule must name "
-                "a field of SelectionObservation"
+                f"unknown nomination metric {self.metric!r} — the namespace is "
+                f"closed at spec pin to {', '.join(NOMINATION_METRICS)}; post-hoc "
+                "metric injection is impossible by construction"
             )
         if self.tiebreak != "lowest_digest":
             raise NominationRuleError(
@@ -75,6 +107,16 @@ class NominationRule:
             )
         if not 0.0 <= self.min_score <= 1.0:
             raise NominationRuleError(f"min_score must be in [0, 1], got {self.min_score!r}")
+        if self.cost_metric not in COST_METRIC_KEYS:
+            raise NominationRuleError(
+                f"unknown cost metric {self.cost_metric!r} — cost normalization is "
+                "pinned to the COST_METRIC_KEYS vocabulary at spec time"
+            )
+        if self.cost_normalization not in COST_NORMALIZATIONS:
+            raise NominationRuleError(
+                f"unknown cost normalization {self.cost_normalization!r} — only "
+                f"{', '.join(COST_NORMALIZATIONS)} is preregistered"
+            )
 
     def to_canonical_dict(self) -> dict[str, object]:
         """Canonical JSON form of the rule (feeds the freeze digest)."""
@@ -82,6 +124,8 @@ class NominationRule:
             "metric": self.metric,
             "min_score": self.min_score,
             "tiebreak": self.tiebreak,
+            "cost_metric": self.cost_metric,
+            "cost_normalization": self.cost_normalization,
         }
 
 
@@ -97,6 +141,13 @@ class SelectionObservation:
     arm_id: str
     candidate_digest: str
     selection_score: float
+    cost_metrics: Mapping[str, float] = MappingProxyType({})
+    """Attested cost metrics for the candidate (FR-102). Keys must be
+    members of the closed COST_METRIC_KEYS vocabulary — an unregistered
+    cost key is a construction error, so a cost shape the spec never
+    pinned cannot ride in through an observation. The productivity rule
+    requires the rule's pinned cost metric to be attested and positive;
+    the selection_score rule ignores these."""
 
     def __post_init__(self) -> None:
         if not self.arm_id:
@@ -109,6 +160,18 @@ class SelectionObservation:
             raise NominationRuleError(
                 f"selection_score must be in [0, 1], got {self.selection_score!r}"
             )
+        unknown = set(self.cost_metrics) - COST_METRIC_KEYS
+        if unknown:
+            raise NominationRuleError(
+                f"unregistered cost metric(s) {sorted(unknown)} — cost_metrics is "
+                "closed to the COST_METRIC_KEYS vocabulary at spec time"
+            )
+        for key, value in self.cost_metrics.items():
+            if not math.isfinite(value) or value < 0.0:
+                raise NominationRuleError(
+                    f"cost metric {key!r} must be a finite non-negative number, got {value!r}"
+                )
+        object.__setattr__(self, "cost_metrics", MappingProxyType(dict(self.cost_metrics)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +292,26 @@ class FrozenNominees:
             ) from None
 
 
+def attested_cost(observation: SelectionObservation, cost_metric: str) -> float | None:
+    """The observation's attested value for `cost_metric`, or None when the
+    metric was not attested or attested at zero — a zero cost would make
+    value-per-cost infinite, so a zero-cost candidate is not rankable.
+    Pure."""
+    cost = observation.cost_metrics.get(cost_metric)
+    if cost is None or cost <= 0.0:
+        return None
+    return cost
+
+
+def productivity_value(selection_score: float, cost: float, arm_max_cost: float) -> float:
+    """The preregistered productivity score (FR-102): selection score per
+    unit of normalized cost. `arm_max_cost` is the largest attested cost in
+    the arm, so the normalized cost `cost / arm_max_cost` lies in (0, 1]
+    and the arm's cheapest candidate earns the largest divisor benefit.
+    Pure: the selector computes it, never the strategy."""
+    return selection_score / (cost / arm_max_cost)
+
+
 class TrustedSelector:
     """Applies the preregistered nomination rule and freezes one nominee
     per arm. The only writer of the nomination ledger, and the only path
@@ -341,21 +424,52 @@ class TrustedSelector:
     # -- internals -------------------------------------------------------------
 
     def _nominate(self, arm_id: str, candidates: list[SelectionObservation]) -> str:
-        """The preregistered rule: best score above the floor, deterministic
-        tiebreak. Exactly one nominee; an arm with no eligible candidate
-        fails closed rather than nominating a guess."""
+        """The preregistered rule: best metric value above the floor,
+        deterministic tiebreak. Exactly one nominee; an arm with no
+        eligible candidate fails closed rather than nominating a guess."""
         eligible = [c for c in candidates if c.selection_score >= self._rule.min_score]
         if not eligible:
             raise NominationRuleError(
                 f"arm {arm_id!r} has no candidate at or above min_score "
                 f"{self._rule.min_score!r} — refusing to nominate a guess"
             )
-        best = max(c.selection_score for c in eligible)
-        tied = sorted(
-            (c for c in eligible if c.selection_score == best),
-            key=lambda c: c.candidate_digest,
-        )
+        if self._rule.metric == "productivity_score":
+            ranked = self._rank_by_productivity(arm_id, eligible)
+        else:
+            best = max(c.selection_score for c in eligible)
+            ranked = [c for c in eligible if c.selection_score == best]
+        tied = sorted(ranked, key=lambda c: c.candidate_digest)
         return tied[0].candidate_digest
+
+    def _rank_by_productivity(
+        self, arm_id: str, eligible: list[SelectionObservation]
+    ) -> list[SelectionObservation]:
+        """Best value-per-cost under the preregistered normalization.
+
+        A candidate without a positive attested cost for the rule's pinned
+        cost metric cannot be priced and is not rankable; an arm where
+        nothing is priceable fails closed."""
+        costs: dict[str, float] = {}
+        for candidate in eligible:
+            cost = attested_cost(candidate, self._rule.cost_metric)
+            if cost is not None:
+                costs[candidate.candidate_digest] = cost
+        if not costs:
+            raise NominationRuleError(
+                f"arm {arm_id!r} has no candidate with a positive attested "
+                f"{self._rule.cost_metric!r} cost — the productivity rule "
+                "refuses to rank a candidate it cannot price"
+            )
+        priced = [c for c in eligible if c.candidate_digest in costs]
+        arm_max_cost = max(costs.values())
+        values = {
+            c.candidate_digest: productivity_value(
+                c.selection_score, costs[c.candidate_digest], arm_max_cost
+            )
+            for c in priced
+        }
+        best = max(values.values())
+        return [c for c in priced if values[c.candidate_digest] == best]
 
     def _freeze_digest(self, nominees: Mapping[str, str]) -> str:
         payload = json.dumps(
@@ -371,6 +485,8 @@ class TrustedSelector:
 
 
 __all__ = [
+    "COST_NORMALIZATIONS",
+    "NOMINATION_METRICS",
     "NOMINATE_EVENT_KIND",
     "REJECT_EVENT_KIND",
     "FrozenNominees",
@@ -379,6 +495,8 @@ __all__ = [
     "NominationLedger",
     "NominationRule",
     "RegistryNominationLedger",
+    "attested_cost",
+    "productivity_value",
     "SelectionObservation",
     "TrustedSelector",
 ]

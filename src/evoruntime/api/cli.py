@@ -320,6 +320,31 @@ def cmd_release_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_release_canary_run(args: argparse.Namespace) -> int:
+    """Admit and run one fixed-horizon canary against the live service."""
+    body: dict[str, Any] = {}
+    if args.min_paired_tasks is not None:
+        body["min_paired_tasks"] = args.min_paired_tasks
+    if args.max_candidate_allocation is not None:
+        body["max_candidate_allocation"] = args.max_candidate_allocation
+    if args.observation_horizon_seconds is not None:
+        body["observation_horizon_seconds"] = args.observation_horizon_seconds
+    if args.seed is not None:
+        body["seed"] = args.seed
+    with build_client(args.config) as client:
+        result = client.start_canary(args.manifest_digest, body or None)
+    _print(result)
+    return 0
+
+
+def cmd_release_canary_status(args: argparse.Namespace) -> int:
+    """Read a release's live canary state."""
+    with build_client(args.config) as client:
+        result = client.canary_status(args.manifest_digest)
+    _print(result)
+    return 0
+
+
 def cmd_approval_request(args: argparse.Namespace) -> int:
     """Open a review-board request (tier-3 promotion or privileged admission)."""
     with build_client(args.config) as client:
@@ -508,6 +533,22 @@ def build_parser() -> argparse.ArgumentParser:
     rollback.add_argument("--manifest-digest", required=True)
     rollback.set_defaults(func=cmd_release_rollback)
     _add_config_arg(rollback)
+
+    canary_run = release_sub.add_parser(
+        "canary-run", help="admit and run one fixed-horizon canary (H6)"
+    )
+    canary_run.add_argument("manifest_digest")
+    canary_run.add_argument("--min-paired-tasks", type=int, default=None)
+    canary_run.add_argument("--max-candidate-allocation", type=float, default=None)
+    canary_run.add_argument("--observation-horizon-seconds", type=float, default=None)
+    canary_run.add_argument("--seed", type=int, default=None)
+    canary_run.set_defaults(func=cmd_release_canary_run)
+
+    canary_status = release_sub.add_parser(
+        "canary-status", help="read a release's live canary state (H6)"
+    )
+    canary_status.add_argument("manifest_digest")
+    canary_status.set_defaults(func=cmd_release_canary_status)
 
     status = release_sub.add_parser("status", help="show a release's rollback status")
     status.add_argument("--manifest-digest", required=True)

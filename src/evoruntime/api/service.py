@@ -65,7 +65,11 @@ from evoruntime.api.schemas import (
     StaticAnalysisReportView,
     TransitionView,
 )
-from evoruntime.campaign.errors import InvalidTransitionError, SpecTamperedError
+from evoruntime.campaign.errors import (
+    InvalidTransitionError,
+    ScaffoldEnvironmentRefusedError,
+    SpecTamperedError,
+)
 from evoruntime.campaign.machine import CampaignOrchestrator, CampaignPhase, CampaignTransition
 from evoruntime.campaign.masks import MutationMask
 from evoruntime.campaign.spec import CampaignSpec, PinnedCampaignSpec, pin_and_sign
@@ -82,6 +86,7 @@ from evoruntime.db.models.campaign import (
     ReleaseActivation,
 )
 from evoruntime.db.models.registry import (
+    ArtifactContent,
     ArtifactStatusEvent,
     EvaluationAttestation,
     ProposalRecord,
@@ -101,6 +106,11 @@ from evoruntime.registry import canonical
 from evoruntime.registry.service import RegistryService
 from evoruntime.security.identities import WorkloadIdentity, WorkloadRole
 from evoruntime.security.signing import DetachedSignature, sign
+from evoruntime.tenancy.audit import RefusalBoundary, record_refusal
+from evoruntime.tenancy.boundaries import SCAFFOLD_REQUIRES_RESEARCH
+from evoruntime.tenancy.environment import TenantEnvironment, is_scaffold_class
+from evoruntime.tenancy.errors import TenantRefusalError
+from evoruntime.tenancy.policy import TenantPolicyRegistry
 
 #: Metric keys the Pareto view reports as *costs* rather than gains or
 #: regressions. Re-exported from `evoruntime.core.metrics` — FR-102's
@@ -264,11 +274,88 @@ class CampaignApiService:
         signing_key: Ed25519PrivateKey,
         evaluator_subject: str,
         adapter_command: tuple[str, ...] = (),
+        tenant_policies: TenantPolicyRegistry | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._signing_key = signing_key
         self._evaluator_subject = evaluator_subject
         self._adapter_command = adapter_command
+        # G6: the deployment's tenant policy documents. An empty registry
+        # (the default) fails closed — every tenant resolves to production,
+        # so scaffold mutation is refused until the deployment pins policy
+        # data saying otherwise (G7 ships the seed documents).
+        self._tenant_policies = (
+            tenant_policies if tenant_policies is not None else TenantPolicyRegistry()
+        )
+
+    def _refuse_scaffold_outside_research(
+        self,
+        session: Session,
+        principal: Principal,
+        *,
+        boundary: RefusalBoundary,
+        artifact_types: frozenset[str] | set[str] | tuple[str, ...],
+        detail: dict[str, Any],
+    ) -> None:
+        """G6 boundaries 2 and 3: scaffold-class artifacts only in research.
+
+        Records the refusal row (append-only ledger) before raising — the
+        datasets service's commit discipline: a refusal recorded inside a
+        transaction that then raises must be committed first, or the
+        audit trail would hold successes only. The commit here is what
+        makes that true: the raise propagates through the caller's
+        `session_scope`, which would otherwise roll the row back.
+        """
+        if not any(is_scaffold_class(t) for t in artifact_types):
+            return
+        environment = self._tenant_policies.environment_for(principal.tenant_id)
+        if environment is TenantEnvironment.RESEARCH:
+            return
+        record_refusal(
+            session,
+            tenant_id=principal.tenant_id,
+            boundary=boundary,
+            reason=SCAFFOLD_REQUIRES_RESEARCH,
+            detail={**detail, "environment": environment.value},
+            actor=principal.identity_id,
+        )
+        session.commit()
+        raise TenantRefusalError(
+            boundary,
+            SCAFFOLD_REQUIRES_RESEARCH,
+            f"scaffold-class artifacts are refused in the {environment.value} environment "
+            "(G6) — scaffold mutation exists only in the research tenant",
+        )
+
+    def _refuse_scaffold_release(
+        self,
+        session: Session,
+        principal: Principal,
+        *,
+        artifact_digests: list[str],
+    ) -> None:
+        """G6 boundary 3 — release activation (create and promote paths).
+
+        Resolves the manifest's artifact rows and refuses any resolved set
+        containing a scaffold-class artifact outside a research tenant.
+        The refusal is recorded before the raise, same commit discipline
+        as the other boundaries.
+        """
+        if not artifact_digests:
+            return
+        rows = session.scalars(
+            select(ArtifactContent.artifact_type).where(
+                ArtifactContent.tenant_id == principal.tenant_id,
+                ArtifactContent.digest.in_(artifact_digests),
+            )
+        ).all()
+        self._refuse_scaffold_outside_research(
+            session,
+            principal,
+            boundary=RefusalBoundary.RELEASE_ACTIVATION,
+            artifact_types=tuple(rows),
+            detail={"artifact_digests": list(artifact_digests)},
+        )
 
     # ------------------------------------------------------------------
     # Campaigns (plan / run / inspect)
@@ -283,8 +370,34 @@ class CampaignApiService:
         """
         try:
             spec = CampaignSpec.from_mapping(spec_mapping)
+        except ScaffoldEnvironmentRefusedError as exc:
+            # G6 boundary 1 — spec construction. The pure spec constructor
+            # has no session; the control plane audits its refusal.
+            with session_scope(self._session_factory) as session:
+                record_refusal(
+                    session,
+                    tenant_id=principal.tenant_id,
+                    boundary=RefusalBoundary.SPEC_CONSTRUCTION,
+                    reason=SCAFFOLD_REQUIRES_RESEARCH,
+                    detail={"environment": spec_mapping.get("environment")},
+                    actor=principal.identity_id,
+                )
+            raise InvalidSpecError(f"campaign spec is invalid: {exc}") from exc
         except Exception as exc:  # InvalidCampaignSpecError and shape errors
             raise InvalidSpecError(f"campaign spec is invalid: {exc}") from exc
+        # G6 boundary 2a — campaign creation: a scaffold-mutable spec may
+        # only be created in a research tenant. (Boundary 1 already forced
+        # the spec itself to declare environment: research, so a scaffold
+        # spec reaching a production tenant here is exactly the mismatch
+        # case — the refusal detail carries both environments.)
+        with session_scope(self._session_factory) as session:
+            self._refuse_scaffold_outside_research(
+                session,
+                principal,
+                boundary=RefusalBoundary.CAMPAIGN_CREATION,
+                artifact_types=tuple(a.artifact_type for a in spec.mutable_artifacts.artifacts),
+                detail={"campaign_name": spec.name},
+            )
         pinned = pin_and_sign(spec, self._signing_key)
         campaign_id = new_id("camp")
         with session_scope(self._session_factory) as session:
@@ -464,6 +577,15 @@ class CampaignApiService:
         except (binascii.Error, ValueError) as exc:
             raise InvalidSpecError("canonical_bytes_b64 is not valid base64") from exc
         with session_scope(self._session_factory) as session:
+            # G6 boundary 2b — candidate registration: scaffold-class
+            # candidates register only in a research tenant.
+            self._refuse_scaffold_outside_research(
+                session,
+                principal,
+                boundary=RefusalBoundary.CANDIDATE_REGISTRATION,
+                artifact_types=(artifact_type,),
+                detail={"strategy_id": strategy_id},
+            )
             if campaign_id is not None:
                 self._require_campaign(session, principal.tenant_id, campaign_id)
             report = None
@@ -924,6 +1046,13 @@ class CampaignApiService:
             )
         with session_scope(self._session_factory) as session:
             registry = RegistryService(session)
+            # G6 boundary 3 — release activation: a resolved set containing
+            # a scaffold-class artifact activates only in a research tenant.
+            self._refuse_scaffold_release(
+                session,
+                principal,
+                artifact_digests=list(artifact_digests),
+            )
             manifest = registry.create_release_manifest(
                 tenant_id=principal.tenant_id,
                 artifact_digests=list(artifact_digests),
@@ -976,6 +1105,14 @@ class CampaignApiService:
                 raise ReleaseStateError(
                     f"release {manifest_digest} is not in canary — promote runs after canary"
                 )
+            # G6 boundary 3 — promotion to active is activation too: the
+            # manifest's resolved set may not contain scaffold-class
+            # artifacts outside a research tenant.
+            self._refuse_scaffold_release(
+                session,
+                principal,
+                artifact_digests=[str(d) for d in manifest.artifact_digests],
+            )
             self._supersede_other_active(session, principal.tenant_id, manifest_digest)
             session.add(
                 ReleaseActivation(

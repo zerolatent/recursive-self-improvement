@@ -128,9 +128,10 @@ A new backend inherits the evidence in three steps:
 from evoruntime.sandbox import register_isolation_backend
 
 register_isolation_backend(
-    "microvm", lambda payloads, checkpoints: FirecrackerIsolationBackend(
+    "microvm",
+    lambda payloads, checkpoints: FirecrackerIsolationBackend(
         payloads=payloads, checkpoints=checkpoints
-    )
+    ),
 )
 # 3. Run the kit against it:
 from tests.sandbox.conformance_kit import ConformanceKit, run_conformance_kit

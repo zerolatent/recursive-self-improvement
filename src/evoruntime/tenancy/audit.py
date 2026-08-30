@@ -28,6 +28,7 @@ from evoruntime.selection.recursive_gate import (
     assert_label_allowed,
 )
 from evoruntime.tenancy.boundaries import (
+    AUTO_PROMOTION_REQUIRES_REVIEW,
     RECURSIVE_CLAIMS_RESEARCH_ONLY,
     SCAFFOLD_REQUIRES_RESEARCH,
     RefusalBoundary,
@@ -37,9 +38,11 @@ from evoruntime.tenancy.errors import TenantRefusalError
 from evoruntime.tenancy.policy import TenantPolicyRegistry
 
 __all__ = [
+    "AUTO_PROMOTION_REQUIRES_REVIEW",
     "RECURSIVE_CLAIMS_RESEARCH_ONLY",
     "RefusalBoundary",
     "SCAFFOLD_REQUIRES_RESEARCH",
+    "assert_auto_promotion_allowed",
     "assert_recursive_label_allowed",
     "record_refusal",
 ]
@@ -121,3 +124,63 @@ def assert_recursive_label_allowed(
             RECURSIVE_CLAIMS_RESEARCH_ONLY,
             str(exc),
         ) from exc
+
+
+def assert_auto_promotion_allowed(
+    session: Session,
+    *,
+    tenant_id: str,
+    policies: TenantPolicyRegistry,
+    tier: int,
+    actor: str = "",
+) -> None:
+    """The §21 decision-5 auto-promotion boundary.
+
+    Answers one question: may this tenant's approval defaults promote
+    `tier` automatically after canary, or does the promotion have to go
+    through two-person review-board approval? The production seed makes
+    tier 1–2 auto-eligible and tier 3+ review-gated; the regulated seed
+    gates every tier. An unmapped tenant resolves to the fail-closed
+    production default shape — the same answer
+    :meth:`TenantPolicyRegistry.environment_for` gives — so the default
+    mirrors the behavior the release plane already exhibits rather than
+    inventing a stricter one.
+
+    A refusal is recorded in the ledger before the error is raised, same
+    commit discipline as every other boundary. This is the policy-plane
+    primitive: like the D7 scaffolding, it ships the check, not the call
+    sites — the release plane consumes it at its own promotion boundary
+    when that wiring lands.
+    """
+    document = policies.policy_for(tenant_id)
+    if document is None:
+        # Fail closed to the production default shape (G6's rule), which
+        # under §21 decision 5 auto-promotes tier 1–2 only.
+        from evoruntime.tenancy.policy import TenantPolicyDocument
+
+        document = TenantPolicyDocument(
+            tenant_id=tenant_id,
+            policy_id=f"fail-closed-default:{tenant_id}",
+            environment=TenantEnvironment.PRODUCTION,
+        )
+    if document.auto_eligible(tier):
+        return
+    record_refusal(
+        session,
+        tenant_id=tenant_id,
+        boundary=RefusalBoundary.AUTO_PROMOTION,
+        reason=AUTO_PROMOTION_REQUIRES_REVIEW,
+        detail={
+            "tier": tier,
+            "environment": document.environment.value,
+            "auto_promotion_max_tier": document.auto_promotion_max_tier,
+            "require_review_for_all_tiers": document.require_review_for_all_tiers,
+        },
+        actor=actor,
+    )
+    raise TenantRefusalError(
+        RefusalBoundary.AUTO_PROMOTION,
+        AUTO_PROMOTION_REQUIRES_REVIEW,
+        f"tier-{tier} promotion is not auto-eligible under this tenant's approval "
+        "defaults (§21 decision 5) — two-person review-board approval is required",
+    )

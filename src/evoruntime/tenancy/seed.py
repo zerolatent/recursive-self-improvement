@@ -33,6 +33,7 @@ from evoruntime.tenancy.policy import TenantPolicyDocument
 
 SEED_RESEARCH_POLICY_ID = "evoruntime-seed-research-policy"
 SEED_PRODUCTION_POLICY_ID = "evoruntime-seed-production-policy"
+SEED_REGULATED_POLICY_ID = "evoruntime-seed-regulated-policy"
 
 
 class UnsignedTenantPolicyError(ValueError):
@@ -82,7 +83,18 @@ def seed_research_tenant_policy(tenant_id: str) -> TenantPolicyDocument:
 
 
 def seed_production_tenant_policy(tenant_id: str) -> TenantPolicyDocument:
-    """The shipped production seed: tiers 1–3, no recursive claims.
+    """The shipped production seed: the §21 decision-5 approval defaults.
+
+    Tier-1/2 artifact classes (memory entries, prompt bundles, compiled
+    programs — ``authority.tier_by_class``) are auto-eligible for
+    promotion after canary; tier-3 classes (workflow, tool, algorithm,
+    bounded harness patches) require two-person review-board approval;
+    tier 4 (scaffold) is structurally absent — it requires the full
+    evidence chain and stays research-tenant-only until a mutation class
+    graduates through the G10 comparability gate. This mirrors the
+    behavior the Phase 2–4 suites already test, which is why codifying it
+    needs no new enforcement code: the documents below are the signed
+    form of what the gates already do.
 
     Deliberately not tier-4-allowing — the environment plane's fail-closed
     rule means production is also what an unmapped tenant gets, and this
@@ -91,9 +103,34 @@ def seed_production_tenant_policy(tenant_id: str) -> TenantPolicyDocument:
     return TenantPolicyDocument(
         tenant_id=tenant_id,
         policy_id=SEED_PRODUCTION_POLICY_ID,
+        policy_version=2,
         environment=TenantEnvironment.PRODUCTION,
         allowed_authority_tiers=(1, 2, 3),
         recursive_claims_enabled=False,
+        auto_promotion_max_tier=2,
+        require_review_for_all_tiers=False,
+    )
+
+
+def seed_regulated_tenant_policy(tenant_id: str) -> TenantPolicyDocument:
+    """The shipped regulated-tenant seed (§21 decision 5, regulated column).
+
+    No auto-promotion at any tier — every promotion, tier 1 through 3,
+    goes through two-person review-board approval — and tier 4 is
+    structurally refused exactly as in the production seed (a production
+    document cannot pin tier-4-allowing defaults). Regulated tenants are
+    still production-environment tenants: the scaffold and recursive-claim
+    fail-closed rules apply unchanged.
+    """
+    return TenantPolicyDocument(
+        tenant_id=tenant_id,
+        policy_id=SEED_REGULATED_POLICY_ID,
+        policy_version=2,
+        environment=TenantEnvironment.PRODUCTION,
+        allowed_authority_tiers=(1, 2, 3),
+        recursive_claims_enabled=False,
+        auto_promotion_max_tier=0,
+        require_review_for_all_tiers=True,
     )
 
 
@@ -135,6 +172,7 @@ def verify_tenant_policy(signed: SignedTenantPolicyDocument) -> None:
 
 __all__ = [
     "SEED_PRODUCTION_POLICY_ID",
+    "SEED_REGULATED_POLICY_ID",
     "SEED_RESEARCH_POLICY_ID",
     "SignedTenantPolicyDocument",
     "UnsignedTenantPolicyError",

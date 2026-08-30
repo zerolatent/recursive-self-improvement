@@ -35,6 +35,11 @@ _DIGEST_PREFIX = "sha256:"
 
 _MAX_AUTHORITY_TIER = 4
 
+#: §21 decision 5 (2026-08-30 ruling): the production approval default.
+#: Tier-1/2 artifact classes are auto-eligible for promotion after canary;
+#: everything above this tier requires two-person review-board approval.
+DEFAULT_AUTO_PROMOTION_MAX_TIER = 2
+
 
 class TenantPolicyDocument:
     """One tenant's environment and approval defaults, as signed data.
@@ -56,6 +61,8 @@ class TenantPolicyDocument:
         policy_version: int = 1,
         allowed_authority_tiers: tuple[int, ...] = (1, 2, 3),
         recursive_claims_enabled: bool = False,
+        auto_promotion_max_tier: int = DEFAULT_AUTO_PROMOTION_MAX_TIER,
+        require_review_for_all_tiers: bool = False,
     ) -> None:
         self.tenant_id = tenant_id
         self.policy_id = policy_id
@@ -63,6 +70,8 @@ class TenantPolicyDocument:
         self.policy_version = policy_version
         self.allowed_authority_tiers = tuple(sorted(set(allowed_authority_tiers)))
         self.recursive_claims_enabled = recursive_claims_enabled
+        self.auto_promotion_max_tier = auto_promotion_max_tier
+        self.require_review_for_all_tiers = require_review_for_all_tiers
         self._validate()
 
     def _validate(self) -> None:
@@ -94,6 +103,55 @@ class TenantPolicyDocument:
                 "a production tenant cannot enable recursive-improvement claims — "
                 "the recursive-label gate is research-only"
             )
+        self._validate_approval_defaults()
+
+    def _validate_approval_defaults(self) -> None:
+        """§21 decision 5: the approval defaults must be internally coherent.
+
+        A tenant cannot auto-promote a tier its approval defaults do not
+        admit at all, and a review-for-everything tenant cannot also name
+        an auto-eligible tier — the two declarations contradict each
+        other, and an incoherent policy governs nothing.
+        """
+        if self.auto_promotion_max_tier < 0:
+            raise TenantPolicyError(
+                f"auto_promotion_max_tier must be >= 0, got {self.auto_promotion_max_tier}"
+            )
+        if self.auto_promotion_max_tier > max(self.allowed_authority_tiers):
+            raise TenantPolicyError(
+                f"auto_promotion_max_tier {self.auto_promotion_max_tier} exceeds the "
+                f"highest allowed authority tier {max(self.allowed_authority_tiers)} — "
+                "a tenant cannot auto-promote a tier it cannot approve at all"
+            )
+        if self.require_review_for_all_tiers and self.auto_promotion_max_tier != 0:
+            raise TenantPolicyError(
+                "require_review_for_all_tiers with auto_promotion_max_tier "
+                f"{self.auto_promotion_max_tier} is incoherent — a tenant that reviews "
+                "everything auto-promotes nothing"
+            )
+        if (
+            self.environment is TenantEnvironment.PRODUCTION
+            and self.auto_promotion_max_tier >= _MAX_AUTHORITY_TIER
+        ):
+            raise TenantPolicyError(
+                "a production tenant cannot auto-promote tier 4 — tier-4 promotions "
+                "require the full evidence chain and exist only in the research "
+                "environment until a mutation class graduates (G10)"
+            )
+
+    def auto_eligible(self, tier: int) -> bool:
+        """True when `tier` is auto-eligible for promotion after canary
+        under this tenant's approval defaults (§21 decision 5)."""
+        return (
+            not self.require_review_for_all_tiers
+            and tier <= self.auto_promotion_max_tier
+            and tier in self.allowed_authority_tiers
+        )
+
+    def requires_two_person_review(self, tier: int) -> bool:
+        """True when `tier` is approvable here but only through two-person
+        review-board approval — never automatically."""
+        return tier in self.allowed_authority_tiers and not self.auto_eligible(tier)
 
     def allows_tier(self, tier: int) -> bool:
         """True when this tenant's approval defaults admit `tier`."""
@@ -108,6 +166,8 @@ class TenantPolicyDocument:
             "environment": self.environment.value,
             "allowed_authority_tiers": list(self.allowed_authority_tiers),
             "recursive_claims_enabled": self.recursive_claims_enabled,
+            "auto_promotion_max_tier": self.auto_promotion_max_tier,
+            "require_review_for_all_tiers": self.require_review_for_all_tiers,
         }
 
     def canonical_bytes(self) -> bytes:

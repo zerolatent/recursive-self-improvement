@@ -72,6 +72,9 @@ FAILURE_CATEGORY_NAMES: frozenset[str] = frozenset(
 # D8 category — not a spec quote.
 SHELL_TOOL = "shell"
 TEST_TOOL = "run_tests"
+#: The fixture agent (H1) emits its test tool under the shorter name; both
+#: name the same "the agent's own test run failed" signal.
+TEST_TOOL_ALIASES = frozenset({"run_tests", "test"})
 EDIT_TOOL = "edit"
 
 
@@ -185,6 +188,8 @@ def classify_failure(
     if explicit is not None:
         return explicit
     failed = _tool_names(trace, ok=False)
+    if failed & TEST_TOOL_ALIASES:
+        return "test_misunderstanding"
     if SHELL_TOOL in failed:
         return "dependency_misuse"
     if TEST_TOOL in failed:

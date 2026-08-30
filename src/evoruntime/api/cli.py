@@ -584,12 +584,14 @@ def build_parser() -> argparse.ArgumentParser:
     canary_run.add_argument("--observation-horizon-seconds", type=float, default=None)
     canary_run.add_argument("--seed", type=int, default=None)
     canary_run.set_defaults(func=cmd_release_canary_run)
+    _add_config_arg(canary_run)
 
     canary_status = release_sub.add_parser(
         "canary-status", help="read a release's live canary state (H6)"
     )
     canary_status.add_argument("manifest_digest")
     canary_status.set_defaults(func=cmd_release_canary_status)
+    _add_config_arg(canary_status)
 
     status = release_sub.add_parser("status", help="show a release's rollback status")
     status.add_argument("--manifest-digest", required=True)

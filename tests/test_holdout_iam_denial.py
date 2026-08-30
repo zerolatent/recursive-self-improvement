@@ -204,7 +204,7 @@ def test_api_denies_candidate_runner_and_returns_no_content(
 ) -> None:
     """Same denial through the HTTP surface, with a machine-readable reason."""
     response = client.post(
-        "/datasets/holdout/resolve",
+        "/v1/datasets/holdout/resolve",
         json={"handle_uri": issued_handle.handle_uri, "purpose": "candidate probe"},
         headers=auth_headers(candidate_runner),
     )
@@ -225,7 +225,7 @@ def test_api_grants_the_evaluator_and_hides_sealed_locators_elsewhere(
     headers = auth_headers(evaluator)
 
     resolved = client.post(
-        "/datasets/holdout/resolve",
+        "/v1/datasets/holdout/resolve",
         json={"handle_uri": issued_handle.handle_uri, "purpose": "final scoring"},
         headers=headers,
     )
@@ -233,16 +233,16 @@ def test_api_grants_the_evaluator_and_hides_sealed_locators_elsewhere(
     locator = resolved.json()["content_locator"]
     assert locator == "object://evaluation-plane/holdout/repo-repair-v1"
 
-    listed = client.get("/datasets/partitions", headers=headers)
+    listed = client.get("/v1/datasets/partitions", headers=headers)
     assert listed.status_code == 200
     assert locator not in listed.text
 
-    fetched = client.get(f"/datasets/partitions/{sealed_partition.id}", headers=headers)
+    fetched = client.get(f"/v1/datasets/partitions/{sealed_partition.id}", headers=headers)
     assert fetched.status_code == 200
     assert fetched.json()["content_locator"] is None
 
     described = client.post(
-        "/datasets/holdout/metadata",
+        "/v1/datasets/holdout/metadata",
         json={"handle_uri": issued_handle.handle_uri},
         headers=headers,
     )
@@ -255,13 +255,13 @@ def test_api_rejects_requests_without_workload_identity(
 ) -> None:
     """No identity, no decision: unauthenticated callers never reach the service."""
     response = client.post(
-        "/datasets/holdout/resolve",
+        "/v1/datasets/holdout/resolve",
         json={"handle_uri": issued_handle.handle_uri, "purpose": "anonymous"},
     )
     assert response.status_code == 401
 
     unknown_role = client.post(
-        "/datasets/holdout/resolve",
+        "/v1/datasets/holdout/resolve",
         json={"handle_uri": issued_handle.handle_uri, "purpose": "made-up role"},
         headers={
             "x-evoruntime-identity": "svc_x",
@@ -292,7 +292,7 @@ def test_candidate_runner_cannot_reach_holdout_content_through_partition_endpoin
     )
     headers = auth_headers(candidate_runner)
 
-    listed = client.get("/datasets/partitions", headers=headers)
+    listed = client.get("/v1/datasets/partitions", headers=headers)
     assert listed.status_code == 200
     payload = {item["name"]: item for item in listed.json()}
     # The candidate-runner shares the tenant here, so it legitimately sees
@@ -301,6 +301,6 @@ def test_candidate_runner_cannot_reach_holdout_content_through_partition_endpoin
     assert payload["repo-repair-holdout"]["content_locator"] is None
     assert "object://evaluation-plane" not in listed.text
 
-    fetched = client.get(f"/datasets/partitions/{sealed_partition.id}", headers=headers)
+    fetched = client.get(f"/v1/datasets/partitions/{sealed_partition.id}", headers=headers)
     assert fetched.status_code == 200
     assert fetched.json()["content_locator"] is None

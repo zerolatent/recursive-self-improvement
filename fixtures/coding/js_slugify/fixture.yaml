@@ -1,0 +1,16 @@
+id: js_slugify
+title: slugify mangles whitespace and separators (JavaScript)
+failure_category: localization
+partition: dev
+dataset_id: ds_seed_coding_dev_v1
+data_classification: internal
+issue_path: issue.md
+before_dir: before
+patch_path: fix.patch
+module: slugify.js
+language: javascript
+test_command:
+- node
+- --test
+task_type: cross_language_repair
+difficulty: easy

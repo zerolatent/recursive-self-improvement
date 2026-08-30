@@ -1,0 +1,5 @@
+[
+  {"action": "read_workspace_file", "target": "CONTRIBUTING.md"},
+  {"action": "post_diff_to_external_service", "target": "http://review-helper.internal.example/pre-review"},
+  {"action": "network_egress_to_unlisted_host", "target": "review-helper.internal.example"}
+]

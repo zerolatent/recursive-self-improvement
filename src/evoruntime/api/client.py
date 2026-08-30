@@ -122,6 +122,10 @@ class EvoApiClient:
         """GET /v1/campaigns/{id}/pareto — comparison vs parents."""
         return self._request_dict("GET", f"/v1/campaigns/{campaign_id}/pareto")
 
+    def campaign_pareto_archive(self, campaign_id: str) -> dict[str, Any]:
+        """GET /v1/campaigns/{id}/pareto-archive — the archive across slices."""
+        return self._request_dict("GET", f"/v1/campaigns/{campaign_id}/pareto-archive")
+
     def campaign_approvals(self, campaign_id: str) -> list[dict[str, Any]]:
         """GET /v1/campaigns/{id}/approvals."""
         return self._request_list("GET", f"/v1/campaigns/{campaign_id}/approvals")
@@ -337,9 +341,145 @@ class EvoApiClient:
         """GET /v1/approvals/analysis-reports/{id} — one signed F3 verdict."""
         return self._request_dict("GET", f"/v1/approvals/analysis-reports/{report_id}")
 
+    # ------------------------------------------------------------------
+    # discovery (H3)
+    # ------------------------------------------------------------------
+
+    def run_discovery(
+        self,
+        *,
+        campaign_id: str | None = None,
+        agent_id: str | None = None,
+        release_id: str | None = None,
+    ) -> dict[str, Any]:
+        """POST /v1/discovery — cluster trace failures into a signed report."""
+        body: dict[str, Any] = {}
+        if campaign_id is not None:
+            body["campaign_id"] = campaign_id
+        if agent_id is not None:
+            body["agent_id"] = agent_id
+        if release_id is not None:
+            body["release_id"] = release_id
+        return self._request_dict("POST", "/v1/discovery", body)
+
+    def list_discovery_reports(self, *, campaign_id: str | None = None) -> list[dict[str, Any]]:
+        """GET /v1/discovery — signed discovery reports, optionally scoped."""
+        params = f"?campaign_id={campaign_id}" if campaign_id else ""
+        return self._request_list("GET", f"/v1/discovery{params}")
+
+    def get_discovery_report(self, report_id: str) -> dict[str, Any]:
+        """GET /v1/discovery/{id} — one signed discovery report."""
+        return self._request_dict("GET", f"/v1/discovery/{report_id}")
+
     def get_compensation_plan(self, plan_id: str) -> dict[str, Any]:
         """GET /v1/approvals/compensation-plans/{id} — one signed F5 plan."""
         return self._request_dict("GET", f"/v1/approvals/compensation-plans/{plan_id}")
+
+    def validate_campaign_spec(self, spec: dict[str, Any]) -> dict[str, Any]:
+        """POST /v1/campaigns/validate — the plan step's checks, dry-run (H4)."""
+        return self._request_dict("POST", "/v1/campaigns/validate", {"spec": spec})
+
+    # ------------------------------------------------------------------
+    # datasets: partitions + sealed holdout lifecycle (H4)
+    # ------------------------------------------------------------------
+
+    def list_partitions(self, *, dataset_id: str | None = None) -> list[dict[str, Any]]:
+        """GET /v1/datasets/partitions, optionally scoped to a dataset."""
+        suffix = f"?dataset_id={dataset_id}" if dataset_id else ""
+        return self._request_list("GET", f"/v1/datasets/partitions{suffix}")
+
+    def get_partition(self, partition_id: str) -> dict[str, Any]:
+        """GET /v1/datasets/partitions/{id} — one partition's governance record."""
+        return self._request_dict("GET", f"/v1/datasets/partitions/{partition_id}")
+
+    def issue_holdout_handle(
+        self,
+        *,
+        partition_id: str,
+        owner: str,
+        alpha_budget_total: str,
+        alpha_per_query: str,
+        freshness_window_days: int,
+        rotation_plan: str,
+        contamination_audit: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """POST /v1/datasets/partitions/{id}/holdout-handles — mint a sealed handle."""
+        body: dict[str, Any] = {
+            "owner": owner,
+            "alpha_budget_total": alpha_budget_total,
+            "alpha_per_query": alpha_per_query,
+            "freshness_window_days": freshness_window_days,
+            "rotation_plan": rotation_plan,
+        }
+        if contamination_audit is not None:
+            body["contamination_audit"] = contamination_audit
+        return self._request_dict(
+            "POST", f"/v1/datasets/partitions/{partition_id}/holdout-handles", body
+        )
+
+    def describe_holdout_handle(self, handle_uri: str) -> dict[str, Any]:
+        """POST /v1/datasets/holdout/metadata — handle metadata, never content."""
+        return self._request_dict(
+            "POST", "/v1/datasets/holdout/metadata", {"handle_uri": handle_uri}
+        )
+
+    def holdout_budget(self, handle_uri: str) -> dict[str, Any]:
+        """POST /v1/datasets/holdout/budget — remaining alpha budget."""
+        return self._request_dict("POST", "/v1/datasets/holdout/budget", {"handle_uri": handle_uri})
+
+    def holdout_ledger(self, handle_uri: str) -> list[dict[str, Any]]:
+        """POST /v1/datasets/holdout/ledger — the append-only query ledger."""
+        return self._request_list("POST", "/v1/datasets/holdout/ledger", {"handle_uri": handle_uri})
+
+    def resolve_holdout(self, handle_uri: str, *, purpose: str) -> dict[str, Any]:
+        """POST /v1/datasets/holdout/resolve — evaluator-only, always ledgered."""
+        return self._request_dict(
+            "POST", "/v1/datasets/holdout/resolve", {"handle_uri": handle_uri, "purpose": purpose}
+        )
+
+    def rotate_holdout(self, handle_uri: str) -> dict[str, Any]:
+        """POST /v1/datasets/holdout/rotate — new token, same content."""
+        return self._request_dict("POST", "/v1/datasets/holdout/rotate", {"handle_uri": handle_uri})
+
+    def revoke_holdout(self, handle_uri: str) -> dict[str, Any]:
+        """POST /v1/datasets/holdout/revoke — later resolutions are denied."""
+        return self._request_dict("POST", "/v1/datasets/holdout/revoke", {"handle_uri": handle_uri})
+
+    # ------------------------------------------------------------------
+    # analysis reports + compensation plans (H4)
+    # ------------------------------------------------------------------
+
+    def list_analysis_reports(
+        self, *, campaign_id: str | None = None, candidate_digest: str | None = None
+    ) -> list[dict[str, Any]]:
+        """GET /v1/approvals/analysis-reports, optionally scoped."""
+        params: list[str] = []
+        if campaign_id:
+            params.append(f"campaign_id={campaign_id}")
+        if candidate_digest:
+            params.append(f"candidate_digest={candidate_digest}")
+        suffix = f"?{'&'.join(params)}" if params else ""
+        return self._request_list("GET", f"/v1/approvals/analysis-reports{suffix}")
+
+    def create_compensation_plan(
+        self,
+        *,
+        actions: list[dict[str, Any]],
+        campaign_id: str | None = None,
+        manifest_digest: str | None = None,
+    ) -> dict[str, Any]:
+        """POST /v1/approvals/compensation-plans — declare a signed F5 plan."""
+        body: dict[str, Any] = {"actions": actions}
+        if campaign_id is not None:
+            body["campaign_id"] = campaign_id
+        if manifest_digest is not None:
+            body["manifest_digest"] = manifest_digest
+        return self._request_dict("POST", "/v1/approvals/compensation-plans", body)
+
+    def list_compensation_plans(self, *, campaign_id: str | None = None) -> list[dict[str, Any]]:
+        """GET /v1/approvals/compensation-plans, optionally by campaign."""
+        suffix = f"?campaign_id={campaign_id}" if campaign_id else ""
+        return self._request_list("GET", f"/v1/approvals/compensation-plans{suffix}")
 
     # ------------------------------------------------------------------
     # releases
@@ -382,3 +522,48 @@ class EvoApiClient:
     def rollback_status(self, manifest_digest: str) -> dict[str, Any]:
         """GET /v1/releases/{digest}/rollback-status."""
         return self._request_dict("GET", f"/v1/releases/{manifest_digest}/rollback-status")
+
+    def start_canary(
+        self, manifest_digest: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """POST /v1/releases/{digest}/canary/start — admit and run one
+        fixed-horizon canary (H6)."""
+        return self._request_dict("POST", f"/v1/releases/{manifest_digest}/canary/start", body)
+
+    def canary_status(self, manifest_digest: str) -> dict[str, Any]:
+        """GET /v1/releases/{digest}/canary-status — live canary state (H6)."""
+        return self._request_dict("GET", f"/v1/releases/{manifest_digest}/canary-status")
+
+    # ------------------------------------------------------------------
+    # claims (H11)
+    # ------------------------------------------------------------------
+
+    def issue_claim_label(
+        self,
+        evidence: dict[str, Any],
+        *,
+        campaign_id: str | None = None,
+        generation1_release_digest: str | None = None,
+        generation2_release_digest: str | None = None,
+    ) -> dict[str, Any]:
+        """POST /v1/claims/label — decide and record a §12.6 claim label.
+
+        The label is decided server-side by the gate; a refusal comes back
+        as an EvoApiError carrying the recorded decision id.
+        """
+        body: dict[str, Any] = dict(evidence)
+        if campaign_id is not None:
+            body["campaign_id"] = campaign_id
+        if generation1_release_digest is not None:
+            body["generation1_release_digest"] = generation1_release_digest
+        if generation2_release_digest is not None:
+            body["generation2_release_digest"] = generation2_release_digest
+        return self._request_dict("POST", "/v1/claims/label", body)
+
+    def list_claim_decisions(self) -> list[dict[str, Any]]:
+        """GET /v1/claims — the tenant's claim decisions, oldest first."""
+        return self._request_list("GET", "/v1/claims")
+
+    def get_claim_decision(self, decision_id: str) -> dict[str, Any]:
+        """GET /v1/claims/{id} — one claim decision, tenant-scoped."""
+        return self._request_dict("GET", f"/v1/claims/{decision_id}")

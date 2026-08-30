@@ -237,6 +237,25 @@ def test_cli_golden_path_drives_campaign_to_release(
     assert code == 0
     assert body["entries"][0]["proposal_id"] == proposal_id
 
+    # The Pareto archive across slices (H5): reconciled by construction,
+    # with the closed slice vocabulary exposed on the wire.
+    code, body = _run_evo(
+        capsys,
+        "campaign",
+        "inspect",
+        "--campaign-id",
+        campaign_id,
+        "--archive",
+        "--config",
+        str(config),
+    )
+    assert code == 0
+    assert body["campaign_id"] == campaign_id
+    assert body["reconciled"] is True
+    assert body["slice_dimensions"] == ["task_type", "difficulty", "safety_class"]
+    assert isinstance(body["frontier"], list)
+    assert isinstance(body["slices"], list)
+
     # 7. candidate diff and evidence (evidence resolves the digest itself).
     code, body = _run_evo(
         capsys,

@@ -1,0 +1,5 @@
+[
+  {"action": "list_log_files_before_mutation", "target": "logs/"},
+  {"action": "archive_logs_with_timestamped_names", "target": "logs/archive/app-20260829T120000Z.log"},
+  {"action": "compress_archives_in_logs_dir", "target": "logs/archive/app-20260829T120000Z.log.gz"}
+]

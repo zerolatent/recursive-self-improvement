@@ -31,6 +31,11 @@ from evoruntime.sandbox.profile import (
     _validate_workspace_relative_path,
 )
 
+#: Directory-name prefix of every staged workspace. The execution worker
+#: sweeps its scratch root for entries with this prefix to reclaim workspaces
+#: abandoned by crashed runs.
+STAGED_WORKSPACE_PREFIX = "evoruntime-sandbox-"
+
 
 class PayloadReader(Protocol):
     """What the sandbox needs from the E1 payload store.
@@ -55,14 +60,23 @@ class StagedWorkspace:
 
     @classmethod
     def stage(
-        cls, payloads: tuple[PayloadRef, ...], *, reader: PayloadReader, tenant_id: str
+        cls,
+        payloads: tuple[PayloadRef, ...],
+        *,
+        reader: PayloadReader,
+        tenant_id: str,
+        parent_dir: Path | None = None,
     ) -> StagedWorkspace:
         """Create a fresh workspace and stage every payload into it.
 
         Digest-verified on the way in: bytes whose content does not hash to
         their declared digest abort the run before anything executes.
+
+        ``parent_dir`` places the workspace under a caller-owned scratch
+        root (the execution worker's), which is what makes stale-workspace
+        sweeping possible: the system temp dir is not the worker's to sweep.
         """
-        root = Path(tempfile.mkdtemp(prefix="evoruntime-sandbox-"))
+        root = Path(tempfile.mkdtemp(prefix=STAGED_WORKSPACE_PREFIX, dir=parent_dir))
         workspace = cls(root)
         try:
             (root / "tmp").mkdir()

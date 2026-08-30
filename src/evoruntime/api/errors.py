@@ -70,6 +70,16 @@ class AnalysisReportNotFoundError(CampaignApiError):
     """No static-analysis report with that id in the caller's tenant."""
 
 
+class DiscoveryReportNotFoundError(CampaignApiError):
+    """No discovery report with that id in the caller's tenant."""
+
+
+class DiscoveryReportIntegrityError(CampaignApiError):
+    """A stored discovery report's bytes no longer hash to its digest, or its
+    signature no longer verifies — the record is detectably tampered, and
+    reads refuse it rather than serving untrusted content."""
+
+
 class ApprovalDeniedError(CampaignApiError):
     """A review-board decision or admission was refused by the
     two-person governance gate (FR-022 semantics).
@@ -82,6 +92,24 @@ class ApprovalDeniedError(CampaignApiError):
     def __init__(self, reason: str, detail: str) -> None:
         super().__init__(detail)
         self.reason = reason
+
+
+class ClaimRefusedError(CampaignApiError):
+    """The evidence does not back the recursive-improvement label (H11).
+
+    The refusal is already recorded append-only when this is raised; the
+    error carries the decision id so the caller can retrieve the record
+    that documents why the label was refused.
+    """
+
+    def __init__(self, decision_id: str, reason: str) -> None:
+        super().__init__(reason)
+        self.decision_id = decision_id
+        self.reason = reason
+
+
+class ClaimDecisionNotFoundError(CampaignApiError):
+    """No claim decision with that id in the caller's tenant."""
 
 
 class TierPromotionRefusedError(CampaignApiError):

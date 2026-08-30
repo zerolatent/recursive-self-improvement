@@ -69,6 +69,12 @@ def _campaign_detail_body(campaign_id: str) -> str:
   <section id="pareto"><h2>Comparison vs parent (gains / regressions / costs)</h2><table>
     <thead><tr><th>Candidate</th><th>Outcome</th><th>Gains</th><th>Regressions</th>
     <th>Costs</th></tr></thead><tbody></tbody></table></section>
+  <section id="archive"><h2>Pareto archive across slices</h2><table>
+    <thead><tr><th>Artifact</th><th>On frontier</th><th>Success</th><th>Mean costs</th>
+    <th>Dominated by</th></tr></thead><tbody></tbody></table>
+    <h2>Slices</h2><table>
+    <thead><tr><th>Dimension</th><th>Value</th><th>Attestations</th><th>Success rate</th>
+    <th>Mean costs</th></tr></thead><tbody></tbody></table></section>
   <section id="evidence"><h2>Evidence</h2><table>
     <thead><tr><th>Bundle</th><th>Artifact</th><th>Items</th></tr></thead>
     <tbody></tbody></table></section>
@@ -102,6 +108,29 @@ def _campaign_detail_body(campaign_id: str) -> str:
         `<tr><td><code>${{e.proposal_id}}</code></td><td>${{e.outcome ?? 'unevaluated'}}</td>` +
         `<td>${{fmt(e.gains)}}</td><td>${{fmt(e.regressions)}}</td><td>${{fmt(e.costs)}}</td></tr>`
       ).join('') || '<tr><td colspan="5">No candidates.</td></tr>';
+    }});
+    fetch(`/v1/campaigns/${{campaignId}}/pareto-archive`).then(r => r.json()).then(report => {{
+      const frontier = document.querySelector('#archive tbody');
+      frontier.innerHTML = report.frontier.map(e =>
+        `<tr><td><code>${{e.artifact_digest}}</code></td>` +
+        `<td class="${{e.on_frontier ? 'gain' : 'regression'}}">${{e.on_frontier}}</td>` +
+        `<td>${{e.success_rate === null ? '—' : (e.success_rate * 100).toFixed(0) + '%'}}</td>` +
+        `<td>${{fmt(e.mean_costs)}}</td>` +
+        `<td>${{e.dominated_by.map(d => `<code>${{d}}</code>`).join(', ') || '—'}}</td></tr>`
+      ).join('') || '<tr><td colspan="5">No evaluated artifacts.</td></tr>';
+      const slices = document.querySelectorAll('#archive tbody')[1];
+      slices.innerHTML = report.slices.map(s =>
+        `<tr><td>${{s.dimension}}</td><td>${{s.value}}</td>` +
+        `<td>${{s.attestation_count}}</td>` +
+        `<td>${{s.success_rate === null ? '—' : (s.success_rate * 100).toFixed(0) + '%'}}</td>` +
+        `<td>${{fmt(s.mean_costs)}}</td></tr>`
+      ).join('') || '<tr><td colspan="5">No slice annotations.</td></tr>';
+      if (!report.reconciled) {{
+        const warn = document.createElement('p');
+        warn.className = 'regression';
+        warn.textContent = `Archive drift detected: ${{report.drift.length}} discrepancy(ies).`;
+        document.querySelector('#archive').prepend(warn);
+      }}
     }});
     fetch(`/v1/evidence?campaign_id=${{campaignId}}`).then(r => r.json()).then(rows => {{
       const tbody = document.querySelector('#evidence tbody');

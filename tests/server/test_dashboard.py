@@ -29,9 +29,16 @@ def test_dashboard_campaign_page_wires_comparison_endpoints(client: TestClient) 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "camp_abc123" in response.text
-    # Candidate comparison, evidence, approvals, and release state all come
-    # from the JSON API — the shell only references those resources.
-    for endpoint in ("/pareto", "/v1/evidence", "/approvals", "/v1/releases"):
+    # Candidate comparison, the Pareto archive across slices, evidence,
+    # approvals, and release state all come from the JSON API — the shell
+    # only references those resources.
+    for endpoint in (
+        "/pareto",
+        "/pareto-archive",
+        "/v1/evidence",
+        "/approvals",
+        "/v1/releases",
+    ):
         assert endpoint in response.text
 
 

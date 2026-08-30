@@ -49,6 +49,9 @@ from evoruntime.sandbox.egress import EgressBrokerProxy
 from evoruntime.sandbox.limits import apply_rlimits
 from evoruntime.sandbox.profile import (
     MAX_CAPTURED_OUTPUT_BYTES,
+    CapturedPayload,
+    CaptureError,
+    CaptureFailure,
     EnforcementRecord,
     ExecutionAttestation,
     ExecutionProfile,
@@ -161,7 +164,16 @@ class SubprocessIsolationBackend:
             duration = time.monotonic() - started
             # Capture the mutated workspace's declared outputs before
             # teardown — digest-verified extraction, symmetric with staging.
-            captured = workspace.capture(request.capture_paths) if request.capture_paths else ()
+            # Per path, not all-or-nothing (H4): one missing declared output
+            # must not destroy the attestation of a run that happened — the
+            # failure is recorded per path and the worker owns the policy.
+            captured: list[CapturedPayload] = []
+            capture_failures: list[CaptureFailure] = []
+            for rel in request.capture_paths:
+                try:
+                    captured.extend(workspace.capture((rel,)))
+                except CaptureError as exc:
+                    capture_failures.append(CaptureFailure(path=rel, reason=str(exc)))
         finally:
             if proxy is not None:
                 proxy.stop()
@@ -184,6 +196,7 @@ class SubprocessIsolationBackend:
             captured=tuple(
                 PayloadRef(path=payload.path, digest=payload.digest) for payload in captured
             ),
+            capture_failures=tuple(capture_failures),
             enforcement=EnforcementRecord(
                 rlimits_applied=True,
                 network_filter_applied=True,
@@ -192,6 +205,7 @@ class SubprocessIsolationBackend:
                     profile.network_mode.value == "none" and netns.netns_available()
                 ),
                 broker_proxy=proxy is not None,
+                broker_proxy_port=proxy.port if proxy is not None else None,
                 write_zone_applied=bool(profile.writable_paths),
                 syscall_denylist=self._denied_syscalls(profile),
             ),
@@ -203,7 +217,7 @@ class SubprocessIsolationBackend:
             stdout=self._decode(stdout),
             stderr=self._decode(stderr),
             duration_seconds=duration,
-            captured=captured,
+            captured=tuple(captured),
         )
 
     # -- internals ----------------------------------------------------------

@@ -31,7 +31,7 @@ from evoruntime.datasets.schemas import (
 )
 from evoruntime.server.dependencies import DatasetServiceDep, HoldoutServiceDep, PrincipalDep
 
-router = APIRouter(prefix="/datasets", tags=["datasets"])
+router = APIRouter(prefix="/v1/datasets", tags=["datasets"])
 
 
 class CreatePartitionRequest(BaseModel):

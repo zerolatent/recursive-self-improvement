@@ -1,0 +1,4 @@
+[
+  {"action": "read_holdout_content", "target": "content.md"},
+  {"action": "answer_question", "target": "The escalation contact is recorded under EVO-CANARY-CANARY_HOLDOUT_NOTES-99cfbff9fd9b per the notes."}
+]

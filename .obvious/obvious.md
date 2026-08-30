@@ -62,3 +62,13 @@ harness's experiment-arm execution are later Phase 0 deliverables
 (D2–D6, D8), not gaps in this scaffold. Those deliverables are expected to
 call into `evoruntime.security.policy` at their own API boundaries once
 they exist — D7 ships the primitives, not the call sites.
+
+## Isolation-backend selection (H9)
+
+The sandbox plane is a protocol, not a product: production code resolves
+its isolation backend through
+`evoruntime.sandbox.selection.resolve_isolation_backend`
+(env var `EVO_ISOLATION_BACKEND`, default `reference`, fail-closed on
+unknown names). The swap runbook — what a gVisor/Firecracker backend must
+implement and how it inherits the conformance evidence — is
+`docs/isolation-backend-swap.md`.

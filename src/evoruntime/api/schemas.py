@@ -42,6 +42,22 @@ class CampaignDetail(CampaignSummary):
     candidate_count: int = 0
 
 
+class CampaignSpecValidation(EvoRuntimeBaseModel):
+    """The result of a validate dry-run — what the spec pins, once valid.
+
+    Deliberately a summary, not the spec: the dry-run's contract is "your
+    document parses and passes the plan step's checks", and echoing the
+    whole spec back would invite treating the response as a registration.
+    """
+
+    valid: bool
+    schema_version: int
+    name: str
+    environment: str | None
+    mutable_artifact_types: tuple[str, ...]
+    arm_ids: tuple[str, ...]
+
+
 class AgentView(EvoRuntimeBaseModel):
     """A registered agent plugin."""
 
@@ -124,6 +140,57 @@ class ParetoReport(EvoRuntimeBaseModel):
     entries: tuple[ParetoEntry, ...] = ()
 
 
+class SliceSummaryView(EvoRuntimeBaseModel):
+    """One slice value's aggregated outcomes and attested costs.
+
+    Success is the pass rate over the slice's attestation outcomes; every
+    cost number (including latency, `wall_clock_s`) comes from the signed
+    attestation's metrics restricted to COST_METRIC_KEYS — claimed values
+    never enter the archive.
+    """
+
+    dimension: str
+    value: str
+    attestation_count: int
+    pass_count: int
+    success_rate: float | None = None
+    mean_costs: dict[str, float] = {}
+
+
+class ArchiveEntryView(EvoRuntimeBaseModel):
+    """One artifact's aggregated archive record with its frontier role.
+
+    `on_frontier` is computed on read (dominated by nothing); membership
+    is never stored, so the dominance rule stays reviewable in code.
+    """
+
+    artifact_digest: str
+    proposal_ids: list[str] = []
+    attestation_count: int
+    pass_count: int
+    success_rate: float | None = None
+    mean_costs: dict[str, float] = {}
+    dominates: list[str] = []
+    dominated_by: list[str] = []
+    on_frontier: bool = True
+
+
+class ParetoArchiveReport(EvoRuntimeBaseModel):
+    """The campaign's Pareto archive across slices (H5).
+
+    `reconciled` reports whether the stored projection still equals what
+    the pure builder produces from the raw append-only records; `drift`
+    carries one human-readable description per discrepancy.
+    """
+
+    campaign_id: str
+    slice_dimensions: list[str] = []
+    frontier: list[ArchiveEntryView] = []
+    slices: list[SliceSummaryView] = []
+    reconciled: bool = True
+    drift: list[str] = []
+
+
 class ApprovalView(EvoRuntimeBaseModel):
     """One approval decision, recorded as an E1 artifact status event."""
 
@@ -154,6 +221,35 @@ class RollbackStatusView(EvoRuntimeBaseModel):
     status: str | None
     prior_release_digest: str | None
     rolled_back_to: str | None = None
+
+
+class CanaryRunView(EvoRuntimeBaseModel):
+    """One canary run's measurements, read from the append-only ledger
+    (H6). The FR-012 numbers ride along with the outcome."""
+
+    run_id: str
+    manifest_digest: str
+    outcome: str
+    paired_tasks: int
+    total_sessions: int
+    candidate_sessions: int
+    candidate_allocation: float
+    stopped_reason: str | None = None
+    rolled_back_to: str | None = None
+    digest_report_coverage: float
+    p99_convergence_seconds: float | None = None
+    observation_elapsed_seconds: float
+    guardrail_events: list[dict[str, Any]] = []
+    release_status: str | None = None
+    created_at: datetime
+
+
+class CanaryStatusView(EvoRuntimeBaseModel):
+    """Where a release stands with respect to its canary runs (H6)."""
+
+    manifest_digest: str
+    release_status: str | None = None
+    latest_run: CanaryRunView | None = None
 
 
 class ApprovalRequestView(EvoRuntimeBaseModel):
@@ -245,6 +341,45 @@ class StaticAnalysisReportView(EvoRuntimeBaseModel):
     created_at: datetime
 
 
+class DiscoveryClusterView(EvoRuntimeBaseModel):
+    """One failure cluster in a discovery report (H3 read surface).
+
+    ``category`` is a D8 taxonomy name, or None for the unclassified
+    bucket — failures that matched no taxonomy entry and no signal rule
+    are reported, never dropped.
+    """
+
+    category: str | None
+    failure_signature: str
+    trace_ids: list[str]
+    representative_trace_ids: list[str]
+    count: int
+
+
+class DiscoveryReportView(EvoRuntimeBaseModel):
+    """A signed discovery report (H3 record type, read surface).
+
+    ``signature_b64``/``signer_public_key_b64`` carry the Ed25519 detached
+    signature over the report's canonical bytes, so a caller can verify
+    what discovery clustered without trusting the JSON.
+    """
+
+    report_id: str
+    campaign_id: str | None = None
+    agent_id: str | None = None
+    release_id: str | None = None
+    traces_scanned: int
+    unresolved_events: int
+    failure_count: int
+    unclassified_count: int
+    categories_hit: list[str]
+    clusters: list[DiscoveryClusterView]
+    report_digest: str
+    signature_b64: str
+    signer_public_key_b64: str
+    created_at: datetime
+
+
 class CompensationPlanView(EvoRuntimeBaseModel):
     """A signed compensation plan (F5 record type, read surface)."""
 
@@ -272,3 +407,26 @@ class AnalysisReportView(EvoRuntimeBaseModel):
     signature_b64: str
     signer_public_key_b64: str
     created_at: datetime
+
+
+class ClaimDecisionView(EvoRuntimeBaseModel):
+    """One append-only §12.6 claim-label decision (H11, read surface).
+
+    ``label`` is the honest label the gate assigned — a refusal records
+    the honest label plus its reason, never a recursive-improvement label
+    the evidence does not back.
+    """
+
+    decision_id: str
+    tenant_id: str
+    label: str
+    issued: bool
+    verdict_satisfied: bool
+    refusal_reason: str | None = None
+    evidence: dict[str, Any]
+    evidence_digest: str
+    campaign_id: str | None = None
+    generation1_release_digest: str | None = None
+    generation2_release_digest: str | None = None
+    actor: str
+    decided_at: datetime

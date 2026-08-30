@@ -23,6 +23,8 @@ class RefusalBoundary(StrEnum):
     CANDIDATE_REGISTRATION = "candidate_registration"
     RELEASE_ACTIVATION = "release_activation"
     RECURSIVE_LABEL = "recursive_label"
+    AUTO_PROMOTION = "auto_promotion"
+    RETENTION = "retention"
 
 
 SCAFFOLD_REQUIRES_RESEARCH = "scaffold_requires_research_tenant"
@@ -30,3 +32,8 @@ SCAFFOLD_REQUIRES_RESEARCH = "scaffold_requires_research_tenant"
 
 RECURSIVE_CLAIMS_RESEARCH_ONLY = "recursive_claims_research_only"
 """The refusal reason for the recursive-label boundary (G6)."""
+
+AUTO_PROMOTION_REQUIRES_REVIEW = "auto_promotion_requires_review"
+"""The refusal reason for the auto-promotion boundary (§21 decision 5):
+the tenant's approval defaults do not make the tier auto-eligible, so
+the promotion must go through two-person review-board approval."""
